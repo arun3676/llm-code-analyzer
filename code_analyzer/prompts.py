@@ -1,27 +1,36 @@
-CODE_ANALYSIS_PROMPT = """Analyze the following code and provide:
-1. Code quality score (0-100)
-2. Potential bugs or issues
-3. Improvement suggestions
-4. Generated documentation
+CODE_ANALYSIS_PROMPT = """Analyze the following code and provide a detailed assessment.
 
-Code:
+Code to analyze:
+```
 {code}
+```
 
-Provide your analysis in JSON format with the following structure:
-{
-    "code_quality_score": float,
-    "potential_bugs": list[str],
-    "improvement_suggestions": list[str],
-    "documentation": str
-}"""
+Please analyze this code and return your analysis in VALID JSON format only, using the exact structure below:
+
+{{
+    "code_quality_score": <a number between 0-100>,
+    "potential_bugs": [
+        <list of strings describing potential bugs or issues>
+    ],
+    "improvement_suggestions": [
+        <list of strings with improvement suggestions>
+    ]
+}}
+
+Your response must be valid, parseable JSON with no other text before or after. Do not include explanations, markdown formatting, or any text outside the JSON structure.
+"""
 
 DOCUMENTATION_PROMPT = """Generate comprehensive documentation for the following code:
-1. First, understand the code's purpose
-2. Identify key components and their relationships
-3. Document function signatures and their purposes
-4. Provide usage examples
 
-Code:
+```
 {code}
+```
 
-Generate the documentation in markdown format."""
+Please provide:
+1. A brief description of what the code does
+2. Detailed explanation of the key components
+3. Function signatures and parameter descriptions
+4. Usage examples
+
+Generate the documentation in markdown format.
+"""

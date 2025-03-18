@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Code Analyzer</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/dracula.min.css" rel="stylesheet">
+    <style>
+        .CodeMirror {
+            height: 400px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .result-panel {
+            height: 600px;
+            overflow-y: auto;
+        }
+        .model-badge {
+            font-size: 0.8rem;
+            padding: 0.25rem 0.5rem;
+            margin-left: 0.5rem;
+        }
+        .quality-score {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+        .api-key-warning {
+            background-color: #fff3cd;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            border-left: 5px solid #ffc107;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="#">LLM Code Analyzer</a>
+        </div>
+    </nav>
+
+    <div class="container my-4">
+        <!-- API Key Warning -->
+        <div id="apiKeyWarning" class="api-key-warning d-none">
+            <h4>⚠️ API Key Configuration Required</h4>
+            <p>We couldn't find the necessary API keys in your environment. To use the Code Analyzer, please:</p>
+            <ol>
+                <li>Create a <code>.env</code> file in your project root directory</li>
+                <li>Add your API keys to the file:</li>
+            </ol>
+            <pre><code>OPENAI_API_KEY=your_actual_openai_api_key_here
+ANTHROPIC_API_KEY=your_actual_anthropic_api_key_here</code></pre>
+            <p>After adding your API keys, restart the application.</p>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-12 mb-4">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Code Input</h5>
+                        <div>
+                            <div id="modelCheckboxes">
+                                <!-- Model checkboxes will be added dynamically -->
+                            </div>
+                            <button id="analyzeBtn" class="btn btn-primary btn-sm ms-2">Analyze Code</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <textarea id="codeEditor"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="resultsSection" class="row d-none">
+            <div class="col-lg-12 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <ul class="nav nav-tabs card-header-tabs" id="resultTabs" role="tablist">
+                            <!-- Tabs will be added dynamically -->
+                        </ul>
+                    </div>
+                    <div class="card-body">
+                        <div class="tab-content" id="resultTabContent">
+                            <!-- Tab panes will be added dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Comparison Section -->
+        <div id="comparisonSection" class="row d-none">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Model Comparison</h5>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Model</th>
+                                    <th>Average Quality Score</th>
+                                    <th>Average Execution Time</th>
+                                    <th>Success Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody id="comparisonTable">
+                                <!-- Comparison data will be added dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading overlay -->
+        <div id="loadingOverlay" class="loading-overlay d-none">
+            <div class="text-center text-white">
+                <div class="spinner-border" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div class="mt-2">Analyzing Code...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.0.2/marked.min.js"></script>
+    <script>
+        // Initialize CodeMirror
+        const codeEditor = CodeMirror.fromTextArea(document.getElementById('codeEditor'), {
+            lineNumbers: true,
+            mode: 'python',
+            theme: 'dracula',
+            indentUnit: 4,
+            smartIndent: true,
+            tabSize: 4,
+            indentWithTabs: false,
+            lineWrapping: true
+        });
+
+        // Sample code for demonstration
+        codeEditor.setValue(`def fibonacci(n):
+    if n <= 0:
+        return []
+    elif n == 1:
+        return [0]
+    
+    sequence = [0, 1]
+    while len(sequence) < n:
+        sequence.append(sequence[-1] + sequence[-2])
+    return sequence`);
+
+        // Check available models
+        async function checkAvailableModels() {
+            try {
+                const response = await fetch('/models');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const models = await response.json();
+                if (models.length === 0) {
+                    // Show API key warning
+                    document.getElementById('apiKeyWarning').classList.remove('d-none');
+                    document.getElementById('analyzeBtn').disabled = true;
+                    return [];
+                }
+                
+                return models;
+            } catch (error) {
+                console.error('Error checking available models:', error);
+                document.getElementById('apiKeyWarning').classList.remove('d-none');
+                document.getElementById('analyzeBtn').disabled = true;
+                return [];
+            }
+        }
+
+        // Set up model checkboxes
+        async function setupModelCheckboxes() {
+            const models = await checkAvailableModels();
+            const checkboxContainer = document.getElementById('modelCheckboxes');
+            
+            if (models.length === 0) {
+                checkboxContainer.innerHTML = '<div class="form-check form-check-inline"><span class="text-danger">No models available</span></div>';
+                return;
+            }
+            
+            models.forEach(model => {
+                const checkboxDiv = document.createElement('div');
+                checkboxDiv.className = 'form-check form-check-inline';
+                
+                const checkbox = document.createElement('input');
+                checkbox.className = 'form-check-input';
+                checkbox.type = 'checkbox';
+                checkbox.id = `${model}Model`;
+                checkbox.value = model;
+                checkbox.checked = true;
+                
+                const label = document.createElement('label');
+                label.className = 'form-check-label';
+                label.htmlFor = `${model}Model`;
+                label.textContent = model.toUpperCase();
+                
+                checkboxDiv.appendChild(checkbox);
+                checkboxDiv.appendChild(label);
+                checkboxContainer.appendChild(checkboxDiv);
+            });
+        }
+
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', () => {
+            setupModelCheckboxes();
+        });
+
+        // Analyze button click handler
+        document.getElementById('analyzeBtn').addEventListener('click', async () => {
+            const code = codeEditor.getValue();
+            if (!code.trim()) {
+                alert('Please enter some code to analyze.');
+                return;
+            }
+
+            // Get all checkboxes
+            const checkboxes = document.querySelectorAll('#modelCheckboxes input[type="checkbox"]');
+            
+            // Get selected models
+            const selectedModels = [];
+            checkboxes.forEach(checkbox => {
+                if (checkbox.checked) selectedModels.push(checkbox.value);
+            });
+
+            if (selectedModels.length === 0) {
+                alert('Please select at least one model for analysis.');
+                return;
+            }
+
+            // Show loading overlay
+            document.getElementById('loadingOverlay').classList.remove('d-none');
+
+            try {
+                // Call the API to analyze the code
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        code: code,
+                        models: selectedModels
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const results = await response.json();
+
+                // Display results
+                displayResults(results);
+
+                // Get and display model comparison
+                await fetchAndDisplayComparison();
+
+            } catch (error) {
+                console.error('Error analyzing code:', error);
+                alert('An error occurred during analysis. Please try again.');
+            } finally {
+                // Hide loading overlay
+                document.getElementById('loadingOverlay').classList.add('d-none');
+            }
+        });
+
+        function displayResults(results) {
+            const resultTabs = document.getElementById('resultTabs');
+            const resultTabContent = document.getElementById('resultTabContent');
+
+            // Clear previous results
+            resultTabs.innerHTML = '';
+            resultTabContent.innerHTML = '';
+
+            // Create tabs and content for each model
+            Object.keys(results).forEach((model, index) => {
+                const isActive = index === 0;
+                const modelResult = results[model];
+                const modelId = `${model}-result`;
+
+                // Create tab
+                const tabItem = document.createElement('li');
+                tabItem.className = 'nav-item';
+                tabItem.innerHTML = `
+                    <a class="nav-link ${isActive ? 'active' : ''}" id="${modelId}-tab" 
+                       data-bs-toggle="tab" href="#${modelId}" role="tab" 
+                       aria-controls="${modelId}" aria-selected="${isActive}">
+                        ${model.toUpperCase()}
+                        <span class="badge ${getModelBadgeClass(model)} model-badge">Model</span>
+                    </a>
+                `;
+                resultTabs.appendChild(tabItem);
+
+                // Create tab content
+                const tabContent = document.createElement('div');
+                tabContent.className = `tab-pane fade ${isActive ? 'show active' : ''}`;
+                tabContent.id = modelId;
+                tabContent.setAttribute('role', 'tabpanel');
+                tabContent.setAttribute('aria-labelledby', `${modelId}-tab`);
+
+                if (modelResult.error) {
+                    tabContent.innerHTML = `<div class="alert alert-danger">${modelResult.error}</div>`;
+                } else {
+                    tabContent.innerHTML = `
+                        <div class="row">
+                            <div class="col-md-4 mb-4">
+                                <div class="card h-100">
+                                    <div class="card-header">Quality Score</div>
+                                    <div class="card-body text-center">
+                                        <div class="quality-score" style="color: ${getScoreColor(modelResult.quality_score)}">
+                                            ${modelResult.quality_score.toFixed(1)}
+                                        </div>
+                                        <div class="text-muted">out of 100</div>
+                                        <div class="mt-3">
+                                            <small class="text-muted">
+                                                Analysis Time: ${modelResult.execution_time.toFixed(2)}s
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-8 mb-4">
+                                <div class="card h-100">
+                                    <div class="card-header">Potential Bugs</div>
+                                    <div class="card-body result-panel">
+                                        <ul class="list-group list-group-flush">
+                                            ${modelResult.potential_bugs.length ? 
+                                                modelResult.potential_bugs.map(bug => 
+                                                    `<li class="list-group-item">${bug}</li>`
+                                                ).join('') : 
+                                                '<li class="list-group-item text-success">No issues detected</li>'
+                                            }
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-4">
+                                <div class="card h-100">
+                                    <div class="card-header">Improvement Suggestions</div>
+                                    <div class="card-body result-panel">
+                                        <ul class="list-group list-group-flush">
+                                            ${modelResult.improvement_suggestions.length ? 
+                                                modelResult.improvement_suggestions.map(suggestion => 
+                                                    `<li class="list-group-item">${suggestion}</li>`
+                                                ).join('') : 
+                                                '<li class="list-group-item text-muted">No suggestions</li>'
+                                            }
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6 mb-4">
+                                <div class="card h-100">
+                                    <div class="card-header">Documentation</div>
+                                    <div class="card-body result-panel markdown-content">
+                                        ${marked.parse(modelResult.documentation)}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                resultTabContent.appendChild(tabContent);
+            });
+
+            // Show results section
+            document.getElementById('resultsSection').classList.remove('d-none');
+        }
+
+        async function fetchAndDisplayComparison() {
+            try {
+                const response = await fetch('/comparison');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const comparison = await response.json();
+                
+                // Check if we have comparison data
+                if (Object.keys(comparison).length === 0) {
+                    return; // No data to display
+                }
+
+                const tableBody = document.getElementById('comparisonTable');
+                tableBody.innerHTML = '';
+
+                Object.keys(comparison).forEach(model => {
+                    const data = comparison[model];
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>
+                            ${model.toUpperCase()}
+                            <span class="badge ${getModelBadgeClass(model)} model-badge">Model</span>
+                        </td>
+                        <td style="color: ${getScoreColor(data.average_quality_score)}">
+                            ${data.average_quality_score.toFixed(2)}
+                        </td>
+                        <td>${data.average_execution_time.toFixed(2)}s</td>
+                        <td>${(data.success_rate * 100).toFixed(1)}%</td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+
+                // Show comparison section
+                document.getElementById('comparisonSection').classList.remove('d-none');
+            } catch (error) {
+                console.error('Error fetching comparison:', error);
+            }
+        }
+
+        function getScoreColor(score) {
+            if (score >= 80) return '#28a745'; // Green
+            if (score >= 60) return '#ffc107'; // Yellow
+            return '#dc3545'; // Red
+        }
+
+        function getModelBadgeClass(model) {
+            switch (model.toLowerCase()) {
+                case 'gpt': return 'bg-success';
+                case 'claude': return 'bg-primary';
+                default: return 'bg-secondary';
+            }
+        }
+    </script>
+</body>
+</html>

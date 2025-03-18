@@ -8,7 +8,7 @@ DEFAULT_CONFIG = {
             "max_tokens": 2000
         },
         "claude": {
-            "name": "claude-3-sonnet-20240229",
+            "name": "claude-3-haiku-20240307",  # Updated to a current Claude model
             "temperature": 0.1,
             "max_tokens": 2000
         }
