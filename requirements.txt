@@ -13,3 +13,4 @@ seaborn==0.12.2
 pytest==7.4.0
 flask==2.3.3
 gunicorn==21.2.0
+openai==0.28.1
