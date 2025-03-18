@@ -1,6 +1,6 @@
 langchain==0.1.0
 langchain-community==0.0.20
-langchain-openai==0.0.5
+# langchain-openai==0.0.5  # Removed to fix dependency conflict
 langchain-anthropic==0.1.1
 openai==0.28.1
 anthropic>=0.17.0,<1.0.0
@@ -13,4 +13,3 @@ seaborn==0.12.2
 pytest==7.4.0
 flask==2.3.3
 gunicorn==21.2.0
-
