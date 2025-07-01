@@ -10,6 +10,7 @@ class CodeAnalysisResult:
     documentation: str
     model_name: str
     execution_time: float
+    fix_suggestions: Optional[List[Any]] = None  # List of FixSuggestion objects
 
 @dataclass
 class ModelEvaluationResult:

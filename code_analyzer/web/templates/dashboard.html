@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LLM Code Analyzer - Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap" rel="stylesheet">
+    <style>
+        /* Mobile-first base styles */
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #0f2027 0%, #2c5364 100%);
+            min-height: 100vh;
+            font-family: 'Orbitron', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #39ff14;
+            margin: 0;
+            padding: 0;
+            font-size: 14px;
+        }
+        
+        .dashboard-container {
+            max-width: 100%;
+            margin: 10px;
+            background: rgba(10, 20, 30, 0.95);
+            border-radius: 12px;
+            box-shadow: 0 0 20px #39ff14, 0 0 5px #00fff7 inset;
+            padding: 20px 15px;
+            border: 2px solid #39ff14;
+        }
+        
+        .dashboard-header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .dashboard-header h1 {
+            font-size: 1.8em;
+            color: #39ff14;
+            text-shadow: 0 0 8px #39ff14, 0 0 16px #00fff7;
+            margin-bottom: 5px;
+            word-wrap: break-word;
+        }
+        
+        .dashboard-header p {
+            color: #00fff7;
+            font-size: 1em;
+            text-shadow: 0 0 4px #00fff7;
+            line-height: 1.4;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: rgba(15, 32, 39, 0.8);
+            border: 2px solid #00fff7;
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 0 12px #00fff7, 0 0 6px #39ff14 inset;
+        }
+        
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #39ff14;
+            text-shadow: 0 0 8px #39ff14;
+            margin-bottom: 5px;
+        }
+        
+        .stat-label {
+            color: #00fff7;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .chart-container {
+            background: rgba(15, 32, 39, 0.8);
+            border: 2px solid #39ff14;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 0 12px #39ff14, 0 0 6px #00fff7 inset;
+        }
+        
+        .chart-title {
+            color: #00fff7;
+            font-size: 1.1em;
+            margin-bottom: 15px;
+            text-align: center;
+            text-shadow: 0 0 6px #00fff7;
+        }
+        
+        .chart {
+            width: 100%;
+            height: 200px;
+            background: rgba(10, 20, 30, 0.9);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #39ff14;
+            font-size: 0.9em;
+        }
+        
+        .recent-activity {
+            background: rgba(15, 32, 39, 0.8);
+            border: 2px solid #00fff7;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 0 12px #00fff7, 0 0 6px #39ff14 inset;
+        }
+        
+        .activity-title {
+            color: #00fff7;
+            font-size: 1.1em;
+            margin-bottom: 15px;
+            text-shadow: 0 0 6px #00fff7;
+        }
+        
+        .activity-item {
+            background: rgba(10, 20, 30, 0.9);
+            border: 1px solid #39ff14;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 10px;
+            color: #39ff14;
+            font-size: 0.9em;
+        }
+        
+        .activity-time {
+            color: #00fff7;
+            font-size: 0.8em;
+            margin-top: 5px;
+        }
+        
+        .back-btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(90deg, #39ff14 0%, #00fff7 100%);
+            color: #0f2027;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1em;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            text-align: center;
+            box-shadow: 0 0 12px #39ff14, 0 0 6px #00fff7 inset;
+            transition: all 0.2s ease;
+            min-height: 44px;
+        }
+        
+        .back-btn:hover {
+            background: linear-gradient(90deg, #00fff7 0%, #39ff14 100%);
+            box-shadow: 0 0 16px #00fff7, 0 0 8px #39ff14 inset;
+            transform: translateY(-2px);
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(57, 255, 20, 0.3);
+            border-radius: 50%;
+            border-top-color: #39ff14;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Tablet styles */
+        @media (min-width: 768px) {
+            body {
+                font-size: 16px;
+            }
+            
+            .dashboard-container {
+                max-width: 900px;
+                margin: 40px auto;
+                padding: 40px 32px 32px 32px;
+                border-radius: 18px;
+            }
+            
+            .dashboard-header h1 {
+                font-size: 2.8em;
+            }
+            
+            .dashboard-header p {
+                font-size: 1.2em;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 20px;
+                margin-bottom: 30px;
+            }
+            
+            .stat-card {
+                padding: 20px;
+            }
+            
+            .stat-number {
+                font-size: 2.5em;
+            }
+            
+            .stat-label {
+                font-size: 1em;
+            }
+            
+            .chart-container {
+                padding: 20px;
+                margin-bottom: 30px;
+            }
+            
+            .chart-title {
+                font-size: 1.2em;
+                margin-bottom: 20px;
+            }
+            
+            .chart {
+                height: 250px;
+                font-size: 1em;
+            }
+            
+            .recent-activity {
+                padding: 20px;
+                margin-bottom: 30px;
+            }
+            
+            .activity-title {
+                font-size: 1.2em;
+                margin-bottom: 20px;
+            }
+            
+            .activity-item {
+                padding: 15px;
+                font-size: 1em;
+            }
+            
+            .back-btn {
+                padding: 16px;
+                font-size: 1.1em;
+            }
+        }
+        
+        /* Desktop styles */
+        @media (min-width: 1024px) {
+            .dashboard-container {
+                padding: 50px 40px 40px 40px;
+            }
+            
+            .dashboard-header h1 {
+                font-size: 3.2em;
+            }
+            
+            .dashboard-header p {
+                font-size: 1.4em;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(4, 1fr);
+                gap: 25px;
+            }
+            
+            .stat-card {
+                padding: 25px;
+            }
+            
+            .stat-number {
+                font-size: 3em;
+            }
+            
+            .stat-label {
+                font-size: 1.1em;
+            }
+            
+            .chart-container {
+                padding: 25px;
+            }
+            
+            .chart-title {
+                font-size: 1.3em;
+            }
+            
+            .chart {
+                height: 300px;
+                font-size: 1.1em;
+            }
+            
+            .recent-activity {
+                padding: 25px;
+            }
+            
+            .activity-title {
+                font-size: 1.3em;
+            }
+            
+            .activity-item {
+                padding: 20px;
+                font-size: 1.1em;
+            }
+            
+            .back-btn {
+                padding: 18px;
+                font-size: 1.2em;
+            }
+        }
+        
+        /* Mobile-specific enhancements */
+        .touch-active {
+            transform: scale(0.95);
+            transition: transform 0.1s ease;
+        }
+        
+        .back-btn:active {
+            transform: scale(0.98);
+        }
+        
+        /* Mobile-specific focus indicators */
+        .back-btn:focus {
+            outline: 2px solid #39ff14;
+            outline-offset: 2px;
+        }
+        
+        /* Mobile-specific text selection */
+        ::selection {
+            background: rgba(57, 255, 20, 0.3);
+            color: #39ff14;
+        }
+        
+        ::-moz-selection {
+            background: rgba(57, 255, 20, 0.3);
+            color: #39ff14;
+        }
+        
+        /* Reduced motion for accessibility */
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <div class="dashboard-header">
+            <h1>📊 Code Analyzer Dashboard</h1>
+            <p>Real-time insights and analytics</p>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="total-analyses">0</div>
+                <div class="stat-label">Total Analyses</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="avg-quality">0</div>
+                <div class="stat-label">Avg Quality Score</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="total-bugs">0</div>
+                <div class="stat-label">Bugs Found</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="total-suggestions">0</div>
+                <div class="stat-label">Suggestions</div>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <div class="chart-title">Quality Score Distribution</div>
+            <div class="chart" id="quality-chart">
+                <span class="loading-spinner"></span> Loading chart...
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <div class="chart-title">Analysis by Model</div>
+            <div class="chart" id="model-chart">
+                <span class="loading-spinner"></span> Loading chart...
+            </div>
+        </div>
+        
+        <div class="recent-activity">
+            <div class="activity-title">Recent Activity</div>
+            <div id="activity-list">
+                <div class="activity-item">
+                    <span class="loading-spinner"></span> Loading recent activity...
+                </div>
+            </div>
+        </div>
+        
+        <a href="/" class="back-btn">← Back to Analyzer</a>
+    </div>
+    
+    <script>
+        $(document).ready(function() {
+            // Mobile-specific enhancements
+            $('.back-btn').on('touchstart', function() {
+                $(this).addClass('touch-active');
+            }).on('touchend touchcancel', function() {
+                $(this).removeClass('touch-active');
+            });
+            
+            // Load dashboard data
+            loadDashboardData();
+            
+            // Refresh data every 30 seconds
+            setInterval(loadDashboardData, 30000);
+        });
+        
+        function loadDashboardData() {
+            // Load stats
+            $.get('/stats', function(data) {
+                $('#total-analyses').text(data.total_analyses || 0);
+                $('#avg-quality').text((data.avg_quality_score || 0).toFixed(1));
+                $('#total-bugs').text(data.total_bugs || 0);
+                $('#total-suggestions').text(data.total_suggestions || 0);
+            }).fail(function() {
+                console.error('Failed to load stats');
+            });
+            
+            // Load recent activity
+            $.get('/recent_activity', function(data) {
+                const activityList = $('#activity-list');
+                activityList.empty();
+                
+                if (data.activities && data.activities.length > 0) {
+                    data.activities.forEach(activity => {
+                        const activityHtml = `
+                            <div class="activity-item">
+                                <div>${activity.description}</div>
+                                <div class="activity-time">${activity.timestamp}</div>
+                            </div>
+                        `;
+                        activityList.append(activityHtml);
+                    });
+                } else {
+                    activityList.html('<div class="activity-item">No recent activity</div>');
+                }
+            }).fail(function() {
+                $('#activity-list').html('<div class="activity-item">Failed to load activity</div>');
+            });
+            
+            // Load charts (placeholder for now)
+            setTimeout(() => {
+                $('#quality-chart').html('Chart visualization would go here');
+                $('#model-chart').html('Chart visualization would go here');
+            }, 1000);
+        }
+        
+        // Handle orientation change
+        window.addEventListener('orientationchange', function() {
+            setTimeout(function() {
+                // Recalculate layout if needed
+                loadDashboardData();
+            }, 500);
+        });
+    </script>
+</body>
+</html>
