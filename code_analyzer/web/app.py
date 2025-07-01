@@ -860,4 +860,10 @@ if __name__ == '__main__':
         print("Some functionality will be limited.")
         print("Please check your dependencies and configuration.\n")
     
-    app.run(debug=True, host='127.0.0.1', port=5000)
+    # Get port from environment variable for production deployment
+    port = int(os.environ.get('PORT', 5000))
+    host = os.environ.get('HOST', '127.0.0.1')
+    debug = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+    
+    print(f"Starting server on {host}:{port} (debug={debug})")
+    app.run(debug=debug, host=host, port=port)
