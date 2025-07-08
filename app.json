@@ -1,0 +1,49 @@
+{
+  "name": "LLM Code Analyzer",
+  "description": "Advanced AI-powered code analysis tool with multiple model support",
+  "repository": "https://github.com/yourusername/llm-code-analyzer",
+  "logo": "https://node-js-sample.herokuapp.com/node.png",
+  "keywords": ["python", "flask", "ai", "code-analysis", "machine-learning"],
+  "env": {
+    "OPENAI_API_KEY": {
+      "description": "Your OpenAI API key",
+      "required": true
+    },
+    "ANTHROPIC_API_KEY": {
+      "description": "Your Anthropic API key",
+      "required": true
+    },
+    "DEEPSEEK_API_KEY": {
+      "description": "Your DeepSeek API key",
+      "required": true
+    },
+    "MERCURY_API_KEY": {
+      "description": "Your Mercury API key",
+      "required": true
+    },
+    "FLASK_ENV": {
+      "description": "Flask environment",
+      "value": "production"
+    },
+    "PYTHONPATH": {
+      "description": "Python path for imports",
+      "value": "/app"
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ],
+  "addons": [
+    {
+      "plan": "heroku-postgresql:mini"
+    }
+  ]
+} 
