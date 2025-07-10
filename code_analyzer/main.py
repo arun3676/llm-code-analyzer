@@ -303,6 +303,8 @@ class CodeAnalyzer:
             file_path: Path to the file containing the code
             language: Optional language of the code
             mode: Analysis mode ('quick' or 'thorough')
+                - 'quick': Fast analysis with 2 bugs/suggestions, 600 tokens
+                - 'thorough': Optimized for 4GB memory - 5 bugs/suggestions, 1200 tokens, RAG enabled with memory optimizations
             
         Returns:
             CodeAnalysisResult object containing analysis results
@@ -328,43 +330,60 @@ class CodeAnalyzer:
         if mode == "quick":
             if model == "claude":
                 analysis_prompt = (
-                    f"{lang_context}Analyze the following code and return up to 2 bugs and 2 suggestions, in valid JSON. "
+                    f"{lang_context}Analyze the following code and return up to 1 bug and 1 suggestion, in valid JSON. "
                     "Do NOT return code, markdown, or code blocks. Only return a short JSON analysis. "
                     "If you see code, do not repeat it, only analyze.\nCode:\n{code}"
                 ).replace("{code}", code)
                 doc_prompt = (
-                    f"{lang_context}Summarize what this code does in 2-3 sentences. "
+                    f"{lang_context}Summarize what this code does in 1-2 sentences. "
                     "Do NOT return code, markdown, or code blocks. Only return a summary."
                 )
             elif model == "mercury":
                 analysis_prompt = (
-                    f"{lang_context}Analyze the following code and return up to 2 bugs and 2 suggestions, in valid JSON. "
+                    f"{lang_context}Analyze the following code and return up to 1 bug and 1 suggestion, in valid JSON. "
                     "Do NOT return code, markdown, or code blocks. Only return a short JSON analysis. "
                     "If you see code, do not repeat it, only analyze.\nCode:\n{code}"
                 ).replace("{code}", code)
                 doc_prompt = (
-                    f"{lang_context}Summarize what this code does in 2-3 sentences. "
+                    f"{lang_context}Summarize what this code does in 1-2 sentences. "
                     "Do NOT return code, markdown, or code blocks. Only return a summary."
                 )
             else:  # deepseek or others
-                analysis_prompt = f"{lang_context}Analyze the following code and return up to 2 bugs and 2 suggestions, in valid JSON. Be concise.\nCode:\n{code}"
-                doc_prompt = f"{lang_context}Summarize what this code does in 2-3 sentences."
-            max_tokens = 600
+                analysis_prompt = f"{lang_context}Analyze the following code and return up to 1 bug and 1 suggestion, in valid JSON. Be concise.\nCode:\n{code}"
+                doc_prompt = f"{lang_context}Summarize what this code does in 1-2 sentences."
+            max_tokens = 400
+            analysis_timeout = 20
             do_rag = False
             do_fixes = False
+            do_specialized = False
+        elif mode == "thorough":
+            # Optimized thorough mode for 4GB memory - RAG enabled but with memory optimizations
+            analysis_prompt = f"{lang_context}Analyze the following code thoroughly and return up to 5 bugs and 5 suggestions, in valid JSON. Be comprehensive but concise.\nCode:\n{code}"
+            doc_prompt = f"{lang_context}Provide detailed documentation for this code, explaining its purpose, parameters, and usage in 3-4 sentences."
+            max_tokens = 1200  # Reduced from 2000
+            do_rag = True  # Re-enabled RAG but with optimizations
+            do_fixes = False  # Disabled for memory optimization
+            do_specialized = False  # Disabled for memory optimization
         else:
             analysis_prompt = f"{lang_context}" + self.prompts['analysis'].format(code=code)
             doc_prompt = f"{lang_context}" + self.prompts['documentation'].format(code=code)
             max_tokens = 2000
             do_rag = include_rag_suggestions
             do_fixes = True
+            do_specialized = True
         
-        # Parallelize LLM calls
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_analysis = executor.submit(lambda: llm.invoke(analysis_prompt))
-            future_doc = executor.submit(lambda: llm.invoke(doc_prompt))
-            result = future_analysis.result()
-            doc_result = future_doc.result()
+        # Parallelize LLM calls for quick mode, sequential for thorough mode to save memory
+        if mode == "thorough":
+            # Sequential calls for memory optimization
+            result = llm.invoke(analysis_prompt)
+            doc_result = llm.invoke(doc_prompt)
+        else:
+            # Parallel calls for other modes
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_analysis = executor.submit(lambda: llm.invoke(analysis_prompt))
+                future_doc = executor.submit(lambda: llm.invoke(doc_prompt))
+                result = future_analysis.result()
+                doc_result = future_doc.result()
         
         analysis_result = result.content if hasattr(result, 'content') else str(result)
         doc_result = doc_result.content if hasattr(doc_result, 'content') else str(doc_result)
@@ -417,21 +436,24 @@ class CodeAnalyzer:
         rag_suggestions = []
         if do_rag and self.rag_assistant:
             try:
+                # Memory-optimized RAG: limit suggestions and use smaller search scope
                 rag_suggestions = self.rag_assistant.get_code_suggestions(
                     code, detected_language, "Looking for similar patterns and improvements"
                 )
                 rag_count = 0
+                max_rag_suggestions = 2 if mode == "thorough" else 3  # Limit for memory optimization
                 for suggestion in rag_suggestions:
-                    if rag_count >= 3:
+                    if rag_count >= max_rag_suggestions:
                         break
                     explanation = suggestion.get('explanation', '')
                     if explanation:
                         short_expl = explanation.split('This code snippet')[0].strip()
-                        if len(short_expl) > 180:
-                            short_expl = short_expl[:180] + '...'
+                        if len(short_expl) > 150:  # Reduced from 180 for memory optimization
+                            short_expl = short_expl[:150] + '...'
                         parsed_result["improvement_suggestions"].append(f"RAG: {short_expl}")
                         rag_count += 1
             except Exception as e:
+                print(f"RAG error (continuing without RAG): {e}")
                 pass
         
         # Run specialized analyzers
@@ -439,19 +461,19 @@ class CodeAnalyzer:
         cloud_analysis = None
         container_analysis = None
         
-        if self.framework_analyzer and file_path:
+        if do_specialized and self.framework_analyzer and file_path:
             try:
                 framework_analysis = self.framework_analyzer.analyze_code(file_path, code)
             except Exception as e:
                 print(f"Framework analysis error: {e}")
         
-        if self.cloud_analyzer and file_path:
+        if do_specialized and self.cloud_analyzer and file_path:
             try:
                 cloud_analysis = self.cloud_analyzer.analyze_code(file_path, code)
             except Exception as e:
                 print(f"Cloud analysis error: {e}")
         
-        if self.container_analyzer and file_path:
+        if do_specialized and self.container_analyzer and file_path:
             try:
                 container_analysis = self.container_analyzer.analyze_code(file_path, code)
             except Exception as e:
@@ -515,6 +537,20 @@ class CodeAnalyzer:
                 result_obj.fix_suggestions = []
         else:
             result_obj.fix_suggestions = []
+        
+        # Get config values for timeout and memory
+        analysis_timeout = self.config.get('analysis', {}).get('timeout', 120)
+        max_memory_mb = self.config.get('analysis', {}).get('max_memory_mb', 4096)
+        
+        # Optional: Warn if memory usage exceeds max_memory_mb
+        try:
+            import psutil
+            process = psutil.Process()
+            mem_mb = process.memory_info().rss / (1024 * 1024)
+            if mem_mb > max_memory_mb * 0.95:
+                print(f"Warning: Memory usage is high ({mem_mb:.1f} MB / {max_memory_mb} MB). Analysis may be unstable.")
+        except ImportError:
+            pass
         
         return result_obj
 

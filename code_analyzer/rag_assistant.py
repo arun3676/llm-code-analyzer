@@ -67,21 +67,46 @@ class RAGCodeAssistant:
         self.embedder = SentenceTransformer(embedding_model)
         
         # Initialize vector database
-        self.chroma_client = chromadb.PersistentClient(
-            path="./chroma_db",
-            settings=Settings(anonymized_telemetry=False)
-        )
-        
-        # Create or get collection
-        self.collection = self.chroma_client.get_or_create_collection(
-            name="code_snippets",
-            metadata={"hnsw:space": "cosine"}
-        )
+        try:
+            self.chroma_client = chromadb.PersistentClient(
+                path="./chroma_db",
+                settings=Settings(anonymized_telemetry=False)
+            )
+            self.collection = self.chroma_client.get_or_create_collection(
+                name="code_snippets",
+                metadata={"hnsw:space": "cosine"}
+            )
+        except Exception as e:
+            print(f"Error initializing ChromaDB: {e}")
+            if ("table collections already exists" in str(e) or
+                "Could not connect to tenant" in str(e)):
+                import shutil
+                print("Attempting to delete ./chroma_db and retry initialization...")
+                try:
+                    shutil.rmtree("./chroma_db")
+                except Exception as del_err:
+                    print(f"Error deleting ./chroma_db: {del_err}")
+                try:
+                    self.chroma_client = chromadb.PersistentClient(
+                        path="./chroma_db",
+                        settings=Settings(anonymized_telemetry=False)
+                    )
+                    self.collection = self.chroma_client.get_or_create_collection(
+                        name="code_snippets",
+                        metadata={"hnsw:space": "cosine"}
+                    )
+                    print("ChromaDB re-initialized successfully after cleanup.")
+                except Exception as retry_err:
+                    print(f"Failed to re-initialize ChromaDB after cleanup: {retry_err}")
+                    raise retry_err
+            else:
+                raise e
         
         # Language patterns for code detection
         self.language_patterns = {
             'python': r'\.py$',
-            'javascript': r'\.(js|jsx|ts|tsx)$',
+            'typescript': r'\.(ts|tsx)$',
+            'javascript': r'\.(js|jsx)$',
             'java': r'\.java$',
             'cpp': r'\.(cpp|cc|cxx|h|hpp)$',
             'go': r'\.go$',
@@ -168,7 +193,7 @@ class RAGCodeAssistant:
         
         return metadata
     
-    def chunk_code(self, content: str, max_tokens: int = 1000) -> List[str]:
+    def chunk_code(self, content: str, max_tokens: int = 500) -> List[str]:
         """Split code into chunks based on token count and logical boundaries."""
         chunks = []
         lines = content.split('\n')
@@ -231,20 +256,27 @@ class RAGCodeAssistant:
                 # Skip non-code files and common directories
                 if (language == 'unknown' or 
                     any(part.startswith('.') for part in file_path.parts) or
-                    any(part in ['node_modules', '__pycache__', '.git', 'venv', 'env'] for part in file_path.parts)):
-                    print(f"Skipping file: {file_path} (reason: language={language}, hidden={any(part.startswith('.') for part in file_path.parts)}, excluded_dir={any(part in ['node_modules', '__pycache__', '.git', 'venv', 'env'] for part in file_path.parts)})")
+                    any(part in ['node_modules', '__pycache__', '.git', 'venv', 'env', 'vscode-extension'] for part in file_path.parts)):
+                    print(f"Skipping file: {file_path} (reason: language={language}, hidden={any(part.startswith('.') for part in file_path.parts)}, excluded_dir={any(part in ['node_modules', '__pycache__', '.git', 'venv', 'env', 'vscode-extension'] for part in file_path.parts)})")
                     continue
                 
                 try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        encoding_used = 'utf-8'
+                    except UnicodeDecodeError:
+                        with open(file_path, 'r', encoding='latin-1') as f:
+                            content = f.read()
+                        encoding_used = 'latin-1'
+                        print(f"Warning: Used latin-1 encoding for file: {file_path}")
                     
                     # Skip empty files
                     if not content.strip():
                         print(f"Skipping empty file: {file_path}")
                         continue
                     
-                    print(f"Processing file: {file_path} (size: {len(content)} chars)")
+                    print(f"Processing file: {file_path} (size: {len(content)} chars, encoding: {encoding_used})")
                     
                     # Extract metadata
                     metadata = self.extract_code_metadata(content, language)
@@ -399,29 +431,33 @@ class RAGCodeAssistant:
         # Create a search query from the code and context
         search_query = f"{code} {context}".strip()
         
-        # Search for similar code
-        results = self.search_code(search_query, top_k=3, language_filter=language)
+        # Memory-optimized search: limit results to 2 for thorough mode efficiency
+        results = self.search_code(search_query, top_k=2, language_filter=language)
         
         suggestions = []
         
         for result in results:
+            # Memory optimization: limit content length
+            content = result.snippet.content
+            if len(content) > 300:  # Limit snippet size for memory efficiency
+                content = content[:300] + "..."
+            
             suggestion = {
                 'type': 'similar_code',
                 'title': f"Similar code in {result.snippet.file_path}",
-                'code': result.snippet.content,
-                'explanation': result.explanation,
+                'code': content,
+                'explanation': result.explanation[:200] + "..." if len(result.explanation) > 200 else result.explanation,  # Limit explanation length
                 'relevance_score': result.relevance_score,
                 'file_path': result.snippet.file_path,
                 'function_name': result.snippet.function_name,
                 'class_name': result.snippet.class_name
             }
             
-            # Add improvement suggestions
+            # Add improvement suggestions only for high relevance
             if result.relevance_score > 0.7:
                 suggestion['improvements'] = [
                     "Consider extracting common patterns into shared functions",
-                    "Look for opportunities to create reusable components",
-                    "Check if there are established coding patterns in the codebase"
+                    "Look for opportunities to create reusable components"
                 ]
             
             suggestions.append(suggestion)
