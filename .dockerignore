@@ -5,4 +5,7 @@ temp_repo
 *.md
 #*.txt
 node_modules
-tests/ 
+tests/
+.env
+.git
+__pycache__/* 
