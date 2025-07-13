@@ -297,6 +297,8 @@
             transition: all 0.3s ease;
             cursor: pointer;
             margin-bottom: 15px;
+            z-index: 10 !important;
+            position: relative;
         }
         
         .cyber-upload-zone:hover, .cyber-upload-zone.dragover {
@@ -358,6 +360,8 @@
             outline: none;
             transition: border 0.2s, box-shadow 0.2s;
             resize: vertical;
+            z-index: 1;
+            position: relative;
         }
         
         .cyber-prompt-input:focus {
@@ -1371,11 +1375,11 @@
         </div>
         <div class="cyber-content" id="tab-multimodal">
             <label class="cyber-label">Upload Image for Analysis:</label>
-            <div class="cyber-upload-zone" id="upload-zone">
+            <div class="cyber-upload-zone" id="upload-zone" tabindex="0" role="button" style="z-index:10; position:relative;">
                 <div class="cyber-upload-icon">📷</div>
                 <div class="cyber-upload-text">Click to upload or drag & drop</div>
                 <div class="cyber-upload-hint">Supports: PNG, JPG, JPEG (Max 10MB)</div>
-                <input type="file" id="image-input" accept="image/*" style="display: none;">
+                <input type="file" id="image-input" accept="image/*" style="display: none;" tabindex="-1">
             </div>
             
             <div id="image-preview-container" style="display: none;">
@@ -1650,10 +1654,11 @@
         // --- FIXED FILE UPLOAD HANDLERS ---
         // Only trigger file input when upload zone is clicked
         $('#upload-zone').off('click').on('click', function(e) {
-            // Only trigger if the click is not on the hidden input itself
-            if (e.target.id !== 'image-input') {
-                $('#image-input').trigger('click');
-            }
+            console.log('Upload zone clicked - opening file picker');
+            $('#image-input').trigger('click');
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
         });
 
         // File input change handler
@@ -1682,15 +1687,25 @@
         function handleImageFile(file) {
             if (!file) return;
             
+            console.log('Processing file:', file.name, 'Size:', file.size, 'Type:', file.type);
+            
             // Validate file type
             if (!file.type.startsWith('image/')) {
-                alert('Please select an image file.');
+                alert('Please select an image file. Supported formats: PNG, JPG, JPEG, GIF, BMP, WebP');
                 return;
             }
             
             // Validate file size (10MB limit)
             if (file.size > 10 * 1024 * 1024) {
-                alert('File size must be less than 10MB.');
+                alert('File size must be less than 10MB. Current size: ' + (file.size / (1024 * 1024)).toFixed(2) + 'MB');
+                return;
+            }
+            
+            // Validate file extension
+            const allowedExtensions = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'];
+            const fileExtension = file.name.split('.').pop().toLowerCase();
+            if (!allowedExtensions.includes(fileExtension)) {
+                alert('Unsupported file format. Please use: ' + allowedExtensions.join(', '));
                 return;
             }
             
@@ -1707,8 +1722,15 @@
                 $('#image-info').html(`
                     <strong>File:</strong> ${file.name}<br>
                     <strong>Size:</strong> ${sizeMB} MB<br>
-                    <strong>Type:</strong> ${file.type}
+                    <strong>Type:</strong> ${file.type}<br>
+                    <strong>Extension:</strong> ${fileExtension}
                 `);
+                
+                // Clear any previous error messages
+                $('#cyber-multimodal-results').html('');
+            };
+            reader.onerror = function() {
+                alert('Error reading file. Please try again.');
             };
             reader.readAsDataURL(file);
         }
@@ -1741,7 +1763,18 @@
                     $('#cyber-multimodal-results').html(renderImageResult(model, result));
                 },
                 error: function(xhr) {
-                    $('#cyber-multimodal-results').html(renderImageResult(model, xhr.responseJSON || {error: 'Unknown error'}));
+                    console.error('Analysis error:', xhr);
+                    let errorMsg = 'Unknown error occurred';
+                    if (xhr.responseJSON && xhr.responseJSON.error) {
+                        errorMsg = xhr.responseJSON.error;
+                    } else if (xhr.status === 0) {
+                        errorMsg = 'Network error - please check your connection';
+                    } else if (xhr.status === 500) {
+                        errorMsg = 'Server error - please check the console for details';
+                    } else if (xhr.status === 400) {
+                        errorMsg = 'Bad request - please check your file and try again';
+                    }
+                    $('#cyber-multimodal-results').html(renderImageResult(model, {error: errorMsg}));
                 }
             });
         }
@@ -2532,6 +2565,16 @@
             { value: 'assembly', label: 'Assembly' },
             { value: 'unknown', label: 'Unknown' }
         ];
+
+        $('#test-upload-btn').click(function() {
+            console.log('Test button clicked - opening file picker');
+            $('#image-input').trigger('click');
+        });
+
+        $('#image-input').on('change', function(e) {
+            console.log('File input changed - file selected');
+            handleImageFile(e.target.files[0]);
+        });
     </script>
 </body>
 </html>

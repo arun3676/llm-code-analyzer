@@ -10,20 +10,21 @@ from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from datetime import datetime
+import logging
 
 # Import our new modules with error handling
 try:
     from .rag_assistant import RAGCodeAssistant
     RAG_AVAILABLE = True
 except ImportError:
-    print("Warning: RAG assistant not available")
+    logging.warning('rag_assistant missing - fallback to basic mode')
     RAG_AVAILABLE = False
 
 try:
     from .security_analyzer import SecurityAnalyzer, SecurityReport
     SECURITY_AVAILABLE = True
 except ImportError:
-    print("Warning: Security analyzer not available")
+    logging.warning('security_analyzer missing - fallback to basic mode')
     SECURITY_AVAILABLE = False
     SecurityReport = None
 
@@ -31,7 +32,7 @@ try:
     from .performance_analyzer import PerformanceAnalyzer, PerformanceReport
     PERFORMANCE_AVAILABLE = True
 except ImportError:
-    print("Warning: Performance analyzer not available")
+    logging.warning('performance_analyzer missing - fallback to basic mode')
     PERFORMANCE_AVAILABLE = False
     PerformanceReport = None
 
@@ -39,12 +40,21 @@ try:
     from .multimodal_analyzer import MultimodalAnalyzer, MultimodalAnalysis
     MULTIMODAL_AVAILABLE = True
 except ImportError:
-    print("Warning: Multimodal analyzer not available")
+    logging.warning('multimodal_analyzer missing - fallback to basic mode')
     MULTIMODAL_AVAILABLE = False
     MultimodalAnalysis = None
 
 from .main import CodeAnalyzer
 from .models import CodeAnalysisResult
+
+# Quantization imports
+try:
+    from peft import LoraConfig, get_peft_model
+    from bitsandbytes import load_in_4bit
+except ImportError:
+    LoraConfig = None
+    get_peft_model = None
+    load_in_4bit = None
 
 @dataclass
 class AdvancedAnalysisResult:
@@ -79,31 +89,26 @@ class AnalysisConfig:
     max_rag_results: int = 5
     security_scan_level: str = 'standard'  # 'basic', 'standard', 'comprehensive'
     performance_analysis_level: str = 'standard'  # 'basic', 'standard', 'comprehensive'
+    quant_enabled: bool = True
+    force_quant: bool = True
 
 class AdvancedCodeAnalyzer:
     """
     Advanced code analyzer that integrates multiple analysis capabilities.
     """
     
-    def __init__(self, config: Optional[AnalysisConfig] = None):
-        """
-        Initialize the advanced code analyzer.
-        
-        Args:
-            config: Configuration for analysis features
-        """
-        self.config = config or AnalysisConfig()
-        
-        # Initialize base analyzer
-        self.base_analyzer = CodeAnalyzer()
-        
-        # Initialize advanced features
-        self.rag_assistant = None
-        self.security_analyzer = None
-        self.performance_analyzer = None
-        self.multimodal_analyzer = None
-        
-        self._initialize_advanced_features()
+    def __init__(self, config):
+        from peft import LoraConfig, get_peft_model
+        from bitsandbytes import load_in_4bit
+        super().__init__(config)
+        self.config = config
+        self.llm = getattr(self, 'llm', None)
+        if self.llm is not None:
+            self.llm = load_in_4bit(self.llm, device_map='auto', load_in_8bit=False)
+            lora_config = LoraConfig(r=4, lora_alpha=8, target_modules=['q_proj', 'v_proj'])
+            self.llm = get_peft_model(self.llm, lora_config)
+        import logging
+        logging.info('Forced 4-bit LoRA quantization')
     
     def _initialize_advanced_features(self):
         """Initialize advanced analysis features based on configuration."""

@@ -21,7 +21,6 @@ DEFAULT_CONFIG = {
     "analysis": {
         "min_quality_score": 0,
         "max_quality_score": 100,
-        "timeout": 120,
-        "max_memory_mb": 4096
+        "timeout": 30
     }
 }

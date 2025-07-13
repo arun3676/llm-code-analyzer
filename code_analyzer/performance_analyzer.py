@@ -15,6 +15,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import logging
 
 @dataclass
 class PerformanceIssue:
@@ -528,27 +529,58 @@ class PerformanceAnalyzer:
         return datetime.now().isoformat()
     
     def profile_function(self, func: callable, *args, **kwargs) -> Dict[str, Any]:
-        """Profile a function's performance."""
-        profiler = cProfile.Profile()
-        profiler.enable()
+        """
+        Profile a function's performance using cProfile.
         
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        
-        profiler.disable()
-        
-        # Get profiling stats
-        s = io.StringIO()
-        ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
-        ps.print_stats(20)  # Top 20 functions
-        
-        return {
-            'execution_time': end_time - start_time,
-            'result': result,
-            'profile_stats': s.getvalue(),
-            'function_name': func.__name__
-        }
+        Args:
+            func: Function to profile
+            *args: Arguments to pass to the function
+            **kwargs: Keyword arguments to pass to the function
+            
+        Returns:
+            Dictionary containing profiling results
+        """
+        try:
+            import cProfile
+            import pstats
+            import io
+            
+            # Create profiler
+            pr = cProfile.Profile()
+            
+            # Profile the function
+            pr.enable()
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            execution_time = time.time() - start_time
+            pr.disable()
+            
+            # Get stats
+            s = io.StringIO()
+            ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+            ps.print_stats(10)  # Top 10 functions
+            
+            # Extract key metrics
+            stats = pr.getstats()
+            total_calls = sum(stat.callcount for stat in stats)
+            total_time = sum(stat.totaltime for stat in stats)
+            
+            return {
+                'execution_time': execution_time,
+                'total_calls': total_calls,
+                'total_time': total_time,
+                'profile_stats': s.getvalue(),
+                'result': result,
+                'success': True
+            }
+            
+        except Exception as e:
+            logging.error(f'Profiling failed: {e}')
+            return {
+                'perf': f'Profiling failed: {str(e)}',
+                'success': False,
+                'error': str(e)
+            }
     
     def benchmark_alternatives(self, code_versions: List[Tuple[str, callable]], *args, **kwargs) -> Dict[str, Any]:
         """Benchmark different code implementations."""

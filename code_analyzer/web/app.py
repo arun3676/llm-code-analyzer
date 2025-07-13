@@ -1,12 +1,11 @@
-from flask import Flask, render_template, request, jsonify, send_file
+import streamlit as st
 import os
-import sys
 from dotenv import load_dotenv
-import json
-from pathlib import Path
+import git
 import tempfile
-import traceback
-from typing import Dict, Any, Optional
+import shutil
+from pathlib import Path
+import sys
 
 # Load environment variables
 load_dotenv()
@@ -14,856 +13,344 @@ load_dotenv()
 # Add project root to path to ensure imports work
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-# Check API keys before importing
-openai_key = os.getenv("OPENAI_API_KEY")
-anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-deepseek_key = os.getenv("DEEPSEEK_API_KEY")
-mercury_key = os.getenv("MERCURY_API_KEY")
-
-if not openai_key or not anthropic_key or not deepseek_key or not mercury_key:
-    print("\n" + "="*50)
-    print("API KEY CONFIGURATION ERROR")
-    print("="*50)
-    
-    if not openai_key:
-        print("❌ OPENAI_API_KEY not found in environment variables")
-        print("   Add your OpenAI API key to the .env file.")
-    
-    if not anthropic_key:
-        print("❌ ANTHROPIC_API_KEY not found in environment variables")
-        print("   Add your Anthropic API key to the .env file.")
-    
-    if not deepseek_key:
-        print("❌ DEEPSEEK_API_KEY not found in environment variables")
-        print("   Add your DeepSeek API key to the .env file.")
-    
-    if not mercury_key:
-        print("❌ MERCURY_API_KEY not found in environment variables")
-        print("   Add your Mercury API key to the .env file.")
-    
-    print("\nCreate a .env file in your project root with:")
-    print("OPENAI_API_KEY=your_actual_openai_api_key")
-    print("ANTHROPIC_API_KEY=your_actual_anthropic_api_key")
-    print("DEEPSEEK_API_KEY=your_actual_deepseek_api_key")
-    print("MERCURY_API_KEY=your_actual_mercury_api_key")
-    print("="*50 + "\n")
-
-# Import the analyzers after checking keys
-from code_analyzer.main import CodeAnalyzer
-from code_analyzer.config import DEFAULT_CONFIG
-
-# Import dashboard
+# Import the required modules
 try:
-    from code_analyzer.dashboard import CodeQualityDashboard
-    DASHBOARD_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Dashboard not available: {e}")
-    DASHBOARD_AVAILABLE = False
-
-# Import advanced features
-try:
+    from code_analyzer.main import CodeAnalyzer
     from code_analyzer.advanced_analyzer import AdvancedCodeAnalyzer, AnalysisConfig
-    ADVANCED_FEATURES_AVAILABLE = True
 except ImportError as e:
-    print(f"Warning: Advanced features not available: {e}")
-    ADVANCED_FEATURES_AVAILABLE = False
+    st.error(f"Failed to import analyzer modules: {e}")
+    st.stop()
 
-app = Flask(__name__)
+# Page configuration
+st.set_page_config(
+    page_title="🤖 LLM Code Analyzer",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Initialize the code analyzer with RAG enabled
+# Custom CSS for beast UI
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        margin-bottom: 2rem;
+        color: white;
+        text-align: center;
+    }
+    .sidebar .sidebar-content {
+        background: linear-gradient(180deg, #f093fb 0%, #f5576c 100%);
+    }
+    .stButton > button {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 25px;
+        padding: 0.5rem 2rem;
+        font-weight: bold;
+        transition: all 0.3s ease;
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    }
+    .analysis-box {
+        background: #f8f9fa;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border-left: 5px solid #667eea;
+        margin: 1rem 0;
+    }
+    .error-box {
+        background: #ffe6e6;
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 5px solid #ff4444;
+        margin: 1rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Main header
+st.markdown('<div class="main-header"><h1>🤖 LLM Code Analyzer</h1><h3>AI-powered code beast with RAG</h3></div>', unsafe_allow_html=True)
+st.title('🤖 LLM Code Analyzer')
+st.subheader('AI-powered code beast with RAG')
 try:
-    analyzer = CodeAnalyzer(config=DEFAULT_CONFIG, enable_rag=True)
-    print("Advanced analyzer initialized successfully!")
+    st.markdown('''<style>
+    html, body, [class^="st-"] {
+        background-color: #000 !important;
+        color: #00FF00 !important;
+        font-family: "Courier New", Courier, monospace !important;
+    }
+    .stApp {
+        background: url("https://www.transparenttextures.com/patterns/matrix.png") repeat !important;
+        background-size: cover !important;
+    }
+    .stTextInput > div > div > input,
+    .stTextArea textarea,
+    .stSelectbox div[data-baseweb="select"],
+    .stMultiSelect div[data-baseweb="select"],
+    .stTextInput input,
+    .stTextArea textarea {
+        background-color: rgba(0,255,0,0.08) !important;
+        color: #00FF00 !important;
+        border: 1px solid #00FF00 !important;
+        font-family: "Courier New", Courier, monospace !important;
+    }
+    .stButton > button {
+        background-color: #00FF00 !important;
+        color: #000 !important;
+        border: 2px solid #00FF00 !important;
+        font-family: "Courier New", Courier, monospace !important;
+        font-weight: bold;
+    }
+    .stButton > button:hover {
+        background-color: #009900 !important;
+        color: #fff !important;
+        border: 2px solid #00FF00 !important;
+    }
+    .stSidebar, .stSidebarContent, .css-1d391kg, .css-1lcbmhc {
+        background-color: rgba(0,0,0,0.95) !important;
+        color: #00FF00 !important;
+    }
+    .stMarkdown, .stMarkdown p, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {
+        color: #00FF00 !important;
+        font-family: "Courier New", Courier, monospace !important;
+        text-shadow: 0 0 8px #00FF00;
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: #00FF00 !important;
+        background: #111 !important;
+        border: 1px solid #00FF00 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #222 !important;
+        color: #00FF00 !important;
+        border-bottom: 2px solid #00FF00 !important;
+    }
+    .stAlert, .stInfo, .stSuccess, .stError, .stWarning {
+        background-color: #111 !important;
+        color: #00FF00 !important;
+        border-left: 5px solid #00FF00 !important;
+    }
+    /* Digital rain animation */
+    @keyframes fall {
+        0% {transform: translateY(-100%); opacity: 0;}
+        100% {transform: translateY(100%); opacity: 1;}
+    }
+    .matrix-rain {
+        display: inline-block;
+        animation: fall 2.5s linear infinite;
+        color: #00FF00 !important;
+        font-family: "Courier New", Courier, monospace !important;
+        text-shadow: 0 0 8px #00FF00;
+    }
+    </style>''', unsafe_allow_html=True)
 except Exception as e:
-    print(f"Error initializing analyzer: {e}")
-    traceback.print_exc()
-    analyzer = None
+    st.warning(f"Matrix theme CSS could not be applied: {e}")
 
-# Initialize dashboard if available
-dashboard = None
-if DASHBOARD_AVAILABLE:
-    try:
-        dashboard = CodeQualityDashboard()
-        print("Code quality dashboard initialized!")
-    except Exception as e:
-        print(f"Error initializing dashboard: {e}")
-        traceback.print_exc()
+# Sidebar configuration
+with st.sidebar:
+    st.markdown("### ⚙️ Configuration")
+    
+    # LLM Model selection
+    llm_choice = st.selectbox(
+        'LLM Model:',
+        ['DeepSeek', 'Claude', 'OpenAI', 'Mercury'],
+        help="Choose your preferred AI model for analysis"
+    )
+    
+    # Analysis types
+    analysis_types = st.multiselect(
+        'Analysis Types:',
+        ['Code Quality & Bugs', 'Performance Profiling', 'Security Scan', 'Framework-Specific', 'Cloud Integration', 'Container/K8s'],
+        default=['Code Quality & Bugs'],
+        help="Select the types of analysis you want to perform"
+    )
+    
+    # Enable adaptive evaluations
+    evals_on = st.checkbox(
+        'Enable Adaptive Evals',
+        value=True,
+        help="Enable adaptive evaluations for more comprehensive analysis"
+    )
+    
+    st.markdown("---")
+    st.markdown("### 📊 Quick Stats")
+    st.info("Ready to analyze your code!")
 
-# Initialize advanced analyzer if available
-advanced_analyzer = None
-if ADVANCED_FEATURES_AVAILABLE:
-    try:
-        config = AnalysisConfig(
-            enable_rag=True,
-            enable_security=True,
-            enable_performance=True,
-            enable_multimodal=True,
-            performance_analysis_level='comprehensive'
-        )
-        advanced_analyzer = AdvancedCodeAnalyzer(config)
-        print("Advanced analyzer with performance profiling initialized!")
-    except Exception as e:
-        print(f"Error initializing advanced analyzer: {e}")
-        traceback.print_exc()
+# Main content area
+col1, col2 = st.columns([2, 1])
 
-@app.route('/')
-def index():
-    """Main page with code analysis interface."""
-    return render_template('index.html')
-
-@app.route('/analyze', methods=['POST'])
-def analyze_code():
-    """Analyze code using the selected model."""
-    try:
-        data = request.get_json()
-        code = data.get('code', '')
-        model = data.get('model', 'deepseek')
-        language_override = data.get('language')
-        file_path = data.get('file_path')
-        mode = data.get('mode', 'quick')
-        
-        if not code.strip():
-            return jsonify({'error': 'No code provided'}), 400
-        
-        if not analyzer:
-            return jsonify({'error': 'Analyzer not initialized'}), 500
-        
-        # Analyze code with RAG suggestions enabled and language override
-        result = analyzer.analyze_code(code, model=model, include_rag_suggestions=True, file_path=file_path, language=language_override, mode=mode)
-        
-        # Record analysis in dashboard if available
-        if dashboard:
-            try:
-                detected_language = language_override or 'unknown'
-                if hasattr(analyzer, 'language_detector') and analyzer.language_detector:
-                    lang_info = analyzer.language_detector.detect_language(code, file_path)
-                    detected_language = lang_info.name
-                
-                dashboard.record_analysis(result, file_path or 'unknown', detected_language, model)
-            except Exception as e:
-                print(f"Error recording analysis in dashboard: {e}")
-        
-        # Detect language/frameworks for UI
-        detected_language = None
-        detected_frameworks = []
-        if hasattr(analyzer, 'language_detector') and analyzer.language_detector:
-            lang_info = analyzer.language_detector.detect_language(code, file_path)
-            detected_language = lang_info.name
-            frameworks = analyzer.language_detector.detect_frameworks(code, detected_language, file_path)
-            detected_frameworks = [fw.name for fw in frameworks]
-        
-        # Convert fix suggestions to serializable format
-        fix_suggestions = []
-        if hasattr(result, 'fix_suggestions') and result.fix_suggestions:
-            for fix in result.fix_suggestions:
-                fix_suggestions.append({
-                    'issue_id': fix.issue_id,
-                    'issue_type': fix.issue_type,
-                    'severity': fix.severity,
-                    'title': fix.title,
-                    'description': fix.description,
-                    'line_number': fix.line_number,
-                    'original_code': fix.original_code,
-                    'fixed_code': fix.fixed_code,
-                    'explanation': fix.explanation,
-                    'confidence': fix.confidence,
-                    'tags': fix.tags,
-                    'related_links': fix.related_links,
-                    'diff': fix.diff,
-                    'can_auto_apply': fix.can_auto_apply
-                })
-        
-        return jsonify({
-            'quality_score': result.code_quality_score,
-            'potential_bugs': result.potential_bugs,
-            'improvement_suggestions': result.improvement_suggestions,
-            'documentation': result.documentation,
-            'execution_time': result.execution_time,
-            'model': model,
-            'fix_suggestions': fix_suggestions,
-            'detected_language': detected_language,
-            'detected_frameworks': detected_frameworks
-        })
-        
-    except Exception as e:
-        print(f"Error in analyze_code: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/analyze_all', methods=['POST'])
-def analyze_all_models():
-    """Analyze code using all available models."""
-    try:
-        data = request.get_json()
-        code = data.get('code', '')
-        mode = data.get('mode', 'quick')
-        
-        if not code.strip():
-            return jsonify({'error': 'No code provided'}), 400
-        
-        if not analyzer:
-            return jsonify({'error': 'Analyzer not initialized'}), 500
-        
-        # Analyze with all models
-        results = analyzer.analyze_with_all_models(code, mode=mode)
-        
-        # Format results for frontend
-        formatted_results = {}
-        for model_name, result in results.items():
-            formatted_results[model_name] = {
-                'quality_score': result.code_quality_score,
-                'potential_bugs': result.potential_bugs,
-                'improvement_suggestions': result.improvement_suggestions,
-                'documentation': result.documentation,
-                'execution_time': result.execution_time
-            }
-        
-        return jsonify(formatted_results)
-        
-    except Exception as e:
-        print(f"Error in analyze_all_models: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/search', methods=['POST'])
-def search_code():
-    """Search for similar code in the codebase using RAG."""
-    try:
-        data = request.get_json()
-        query = data.get('query', '')
-        top_k = data.get('top_k', 5)
-        language_filter = data.get('language_filter')
-        
-        if not query.strip():
-            return jsonify({'error': 'No search query provided'}), 400
-        
-        if not analyzer:
-            return jsonify({'error': 'Analyzer not initialized'}), 500
-        
-        # Search using integrated RAG
-        results = analyzer.search_similar_code(query, top_k, language_filter)
-        
-        return jsonify({
-            'results': results,
-            'query': query,
-            'total_results': len(results)
-        })
-        
-    except Exception as e:
-        print(f"Error in search_code: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/stats', methods=['GET'])
-def get_codebase_stats():
-    """Get statistics about the indexed codebase."""
-    try:
-        if not analyzer:
-            return jsonify({'error': 'Analyzer not initialized'}), 500
-        
-        stats = analyzer.get_codebase_stats()
-        return jsonify(stats)
-        
-    except Exception as e:
-        print(f"Error getting stats: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/reindex', methods=['POST'])
-def reindex_codebase():
-    """Reindex the codebase for RAG search."""
-    try:
-        if not analyzer:
-            return jsonify({'error': 'Analyzer not initialized'}), 500
-        
-        snippet_count = analyzer.reindex_codebase(force_reindex=True)
-        
-        return jsonify({
-            'message': f'Successfully indexed {snippet_count} code snippets',
-            'snippet_count': snippet_count
-        })
-        
-    except Exception as e:
-        print(f"Error reindexing: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/models', methods=['GET'])
-def get_available_models():
-    """Get list of available models."""
-    try:
-        if not analyzer:
-            return jsonify({'error': 'Analyzer not initialized'}), 500
-        
-        models = list(analyzer.models.keys())
-        return jsonify({'models': models})
-        
-    except Exception as e:
-        print(f"Error getting models: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/vision_models', methods=['GET'])
-def get_available_vision_models():
-    """Get list of available vision models."""
-    try:
-        # Import vision analyzer
+with col1:
+    st.markdown("### 📝 Code Input")
+    
+    # Code input area
+    code_input = st.text_area(
+        'Paste Code:',
+        height=300,
+        placeholder="Paste your code here or upload a file below...",
+        help="Enter the code you want to analyze"
+    )
+    
+    # File uploader
+    file_up = st.file_uploader(
+        'Upload Code File:',
+        type=['py', 'js', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'swift', 'kt'],
+        help="Upload a code file to analyze"
+    )
+    
+    # Handle file upload
+    if file_up:
         try:
-            from code_analyzer.multimodal_analyzer import MultiModalAnalyzer
-            vision_analyzer = MultiModalAnalyzer()
-            models = vision_analyzer.get_available_models()
-            return jsonify({'models': models})
-        except ImportError:
-            return jsonify({'error': 'Multi-modal analysis not available'}), 500
-        
-    except Exception as e:
-        print(f"Error getting vision models: {e}")
-        return jsonify({'error': str(e)}), 500
+            code_input = file_up.read().decode('utf-8')
+            st.success(f"✅ File '{file_up.name}' loaded successfully!")
+        except Exception as e:
+            st.error(f"❌ Error reading file: {str(e)}")
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint."""
-    try:
-        status = {
-            'status': 'healthy',
-            'analyzer_initialized': analyzer is not None,
-            'rag_available': analyzer.rag_assistant is not None if analyzer else False,
-            'models_available': list(analyzer.models.keys()) if analyzer else []
-        }
-        return jsonify(status)
-        
-    except Exception as e:
-        return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
+with col2:
+    st.markdown("### 🔗 Repository")
+    
+    # GitHub repo URL input
+    repo_url = st.text_input(
+        'GitHub Repo URL (optional):',
+        placeholder="https://github.com/username/repo",
+        help="Enter a GitHub repository URL to analyze the entire codebase"
+    )
+    
+    if repo_url:
+        st.info("🌐 Repository mode enabled")
 
-@app.route('/analyze_image', methods=['POST'])
-def analyze_image():
-    """Analyze uploaded image using vision-capable LLMs."""
-    try:
-        # Check if image file was uploaded
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image file uploaded'}), 400
-        
-        image_file = request.files['image']
-        if image_file.filename == '':
-            return jsonify({'error': 'No image file selected'}), 400
-        
-        # Get optional prompt
-        prompt = request.form.get('prompt', 'Analyze this image and provide insights about any code, diagrams, or UI elements you can see.')
-        model = request.form.get('model', 'gpt4v')
-        
-        # Validate file type
-        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
-        if not ('.' in image_file.filename and 
-                image_file.filename.rsplit('.', 1)[1].lower() in allowed_extensions):
-            return jsonify({'error': 'Invalid file type. Please upload an image file.'}), 400
-        
-        # Validate file size (10MB limit)
-        if len(image_file.read()) > 10 * 1024 * 1024:
-            return jsonify({'error': 'File size must be less than 10MB'}), 400
-        
-        # Reset file pointer
-        image_file.seek(0)
-        
-        # Import vision analyzer
+# Analysis button
+st.markdown("---")
+analyze_button = st.button(
+    '🚀 Analyze Now',
+    type="primary",
+    use_container_width=True
+)
+
+# Analysis logic
+if analyze_button:
+    if not code_input and not repo_url:
+        st.error('❌ No code, bro – input something.')
+    else:
         try:
-            from code_analyzer.multimodal_analyzer import MultiModalAnalyzer
-            vision_analyzer = MultiModalAnalyzer()
-        except ImportError:
-            return jsonify({'error': 'Multi-modal analysis not available. Please install required dependencies.'}), 500
-        
-        # Analyze image
-        import time
-        start_time = time.time()
-        
-        result = vision_analyzer.analyze_image(image_file, prompt, model)
-        
-        execution_time = time.time() - start_time
-        
-        return jsonify({
-            'analysis': result.get('analysis', ''),
-            'code_extracted': result.get('code_extracted', ''),
-            'suggestions': result.get('suggestions', []),
-            'execution_time': round(execution_time, 2),
-            'model': model
-        })
-        
-    except Exception as e:
-        print(f"Error in analyze_image: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/analyze_image_all', methods=['POST'])
-def analyze_image_all_models():
-    """Analyze uploaded image using all available vision models."""
-    try:
-        # Check if image file was uploaded
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image file uploaded'}), 400
-        
-        image_file = request.files['image']
-        if image_file.filename == '':
-            return jsonify({'error': 'No image file selected'}), 400
-        
-        # Get optional prompt
-        prompt = request.form.get('prompt', 'Analyze this image and provide insights about any code, diagrams, or UI elements you can see.')
-        
-        # Validate file type and size
-        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
-        if not ('.' in image_file.filename and 
-                image_file.filename.rsplit('.', 1)[1].lower() in allowed_extensions):
-            return jsonify({'error': 'Invalid file type. Please upload an image file.'}), 400
-        
-        if len(image_file.read()) > 10 * 1024 * 1024:
-            return jsonify({'error': 'File size must be less than 10MB'}), 400
-        
-        # Reset file pointer
-        image_file.seek(0)
-        
-        # Import vision analyzer
-        try:
-            from code_analyzer.multimodal_analyzer import MultiModalAnalyzer
-            vision_analyzer = MultiModalAnalyzer()
-        except ImportError:
-            return jsonify({'error': 'Multi-modal analysis not available. Please install required dependencies.'}), 500
-        
-        # Analyze with all available models
-        results = vision_analyzer.analyze_with_all_models(image_file, prompt)
-        
-        return jsonify(results)
-        
-    except Exception as e:
-        print(f"Error in analyze_image_all: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/analyze_github', methods=['POST'])
-def analyze_github_link():
-    """Analyze code from a GitHub link."""
-    try:
-        data = request.get_json()
-        if not data or 'github_url' not in data:
-            return jsonify({'error': 'GitHub URL is required'}), 400
-        
-        github_url = data['github_url'].strip()
-        model = data.get('model', 'deepseek')
-        custom_prompt = data.get('prompt', 'Analyze this code and provide a comprehensive explanation.')
-        
-        # Validate GitHub URL
-        if not github_url.startswith(('https://github.com/', 'http://github.com/')):
-            return jsonify({'error': 'Please provide a valid GitHub URL'}), 400
-        
-        # Import GitHub analyzer
-        try:
-            from code_analyzer.github_analyzer import GitHubAnalyzer
-            github_analyzer = GitHubAnalyzer()
-        except ImportError:
-            return jsonify({'error': 'GitHub analysis not available. Please install required dependencies.'}), 500
-        
-        # Analyze GitHub link
-        import time
-        start_time = time.time()
-        
-        result = github_analyzer.analyze_github_link(github_url, custom_prompt, model)
-        
-        execution_time = time.time() - start_time
-        
-        return jsonify({
-            'analysis': result.get('analysis', ''),
-            'code_content': result.get('code_content', ''),
-            'file_info': result.get('file_info', {}),
-            'suggestions': result.get('suggestions', []),
-            'execution_time': round(execution_time, 2),
-            'model': model
-        })
-        
-    except Exception as e:
-        print(f"Error in analyze_github_link: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/ask_github_repo', methods=['POST'])
-def ask_github_repo():
-    """Answer a question about a GitHub repo using DeepSeek and the repo's README."""
-    try:
-        data = request.get_json()
-        github_url = data.get('github_url', '').strip()
-        question = data.get('question', '').strip()
-        if not github_url or not question:
-            return jsonify({'error': 'GitHub URL and question are required'}), 400
-
-        # Parse repo info
-        import re
-        m = re.match(r'https?://github.com/([^/]+)/([^/]+)', github_url)
-        if not m:
-            return jsonify({'error': 'Invalid GitHub repo URL'}), 400
-        owner, repo = m.group(1), m.group(2)
-
-        # Try to fetch README (try common names)
-        readme_content = None
-        for readme_name in ['README.md', 'README.MD', 'README.txt', 'README']:
-            raw_url = f'https://raw.githubusercontent.com/{owner}/{repo}/master/{readme_name}'
-            import requests
-            resp = requests.get(raw_url)
-            if resp.status_code == 200 and resp.text.strip():
-                readme_content = resp.text.strip()
-                break
-            # Try main branch if master fails
-            raw_url_main = f'https://raw.githubusercontent.com/{owner}/{repo}/main/{readme_name}'
-            resp_main = requests.get(raw_url_main)
-            if resp_main.status_code == 200 and resp_main.text.strip():
-                readme_content = resp_main.text.strip()
-                break
-        if not readme_content:
-            readme_content = '(No README found in this repository.)'
-
-        # Compose prompt for DeepSeek
-        prompt = f"""
-You are an expert code assistant. Here is the README of a GitHub repository:
-
----
-{readme_content}
----
-
-Answer the following question about this repository:
-
-"{question}"
-
-Be concise, accurate, and helpful.
-"""
-        # Use DeepSeek model for answer
-        if not analyzer:
-            return jsonify({'error': 'Analyzer not initialized'}), 500
-        answer_result = analyzer.models['deepseek'].invoke(prompt)
-        answer = answer_result.content if hasattr(answer_result, 'content') else str(answer_result)
-        return jsonify({'answer': answer})
-    except Exception as e:
-        print(f"Error in ask_github_repo: {e}")
-        import traceback; traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/analyze_advanced', methods=['POST'])
-def analyze_code_advanced():
-    """Perform comprehensive code analysis including performance profiling."""
-    try:
-        data = request.get_json()
-        code = data.get('code', '')
-        language = data.get('language', 'python')
-        model = data.get('model', 'deepseek')
-        
-        if not code.strip():
-            return jsonify({'error': 'No code provided'}), 400
-        
-        if not advanced_analyzer:
-            return jsonify({'error': 'Advanced analyzer not available'}), 500
-        
-        # Perform comprehensive analysis
-        result = advanced_analyzer.analyze_code_advanced(
-            code, language, '', model
-        )
-        
-        # Format performance analysis results
-        performance_data = None
-        if result.performance_report:
-            performance_data = {
-                'overall_score': result.performance_report.overall_score,
-                'issues': [
-                    {
-                        'type': issue.issue_type,
-                        'severity': issue.severity,
-                        'description': issue.description,
-                        'line_number': issue.line_number,
-                        'code_snippet': issue.code_snippet,
-                        'impact': issue.impact,
-                        'suggestion': issue.suggestion,
-                        'ai_optimization': issue.ai_optimization
-                    }
-                    for issue in result.performance_report.issues
-                ],
-                'summary': result.performance_report.summary,
-                'recommendations': result.performance_report.recommendations,
-                'complexity_analysis': result.performance_report.complexity_analysis,
-                'ai_insights': result.performance_report.ai_insights,
-                'optimization_examples': result.performance_report.optimization_examples
-            }
-        
-        return jsonify({
-            'code_analysis': {
-                'quality_score': result.code_analysis.code_quality_score if result.code_analysis else None,
-                'potential_bugs': result.code_analysis.potential_bugs if result.code_analysis else [],
-                'improvement_suggestions': result.code_analysis.improvement_suggestions if result.code_analysis else [],
-                'documentation': result.code_analysis.documentation if result.code_analysis else ''
-            },
-            'performance_analysis': performance_data,
-            'security_analysis': result.security_report.__dict__ if result.security_report else None,
-            'rag_suggestions': result.rag_suggestions,
-            'analysis_timestamp': result.analysis_timestamp,
-            'analysis_duration': result.analysis_duration,
-            'features_used': result.features_used
-        })
-        
-    except Exception as e:
-        print(f"Error in analyze_code_advanced: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/profile_function', methods=['POST'])
-def profile_function():
-    """Profile a specific function's performance."""
-    try:
-        data = request.get_json()
-        code = data.get('code', '')
-        function_name = data.get('function_name', '')
-        test_inputs = data.get('test_inputs', [])
-        
-        if not code.strip() or not function_name:
-            return jsonify({'error': 'Code and function name are required'}), 400
-        
-        if not advanced_analyzer or not advanced_analyzer.performance_analyzer:
-            return jsonify({'error': 'Performance analyzer not available'}), 500
-        
-        # Create a temporary namespace to execute the code
-        namespace = {}
-        exec(code, namespace)
-        
-        if function_name not in namespace:
-            return jsonify({'error': f'Function {function_name} not found in code'}), 400
-        
-        func = namespace[function_name]
-        
-        # Profile the function
-        profile_results = []
-        for i, test_input in enumerate(test_inputs):
-            try:
-                if isinstance(test_input, dict):
-                    result = advanced_analyzer.performance_analyzer.profile_function(
-                        func, **test_input
-                    )
-                else:
-                    result = advanced_analyzer.performance_analyzer.profile_function(
-                        func, *test_input
-                    )
-                
-                profile_results.append({
-                    'test_case': i + 1,
-                    'input': test_input,
-                    'execution_time': result['execution_time'],
-                    'profile_stats': result['profile_stats']
-                })
-            except Exception as e:
-                profile_results.append({
-                    'test_case': i + 1,
-                    'input': test_input,
-                    'error': str(e)
-                })
-        
-        return jsonify({
-            'function_name': function_name,
-            'profile_results': profile_results
-        })
-        
-    except Exception as e:
-        print(f"Error in profile_function: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/benchmark_alternatives', methods=['POST'])
-def benchmark_alternatives():
-    """Benchmark different code implementations."""
-    try:
-        data = request.get_json()
-        code_versions = data.get('code_versions', [])  # List of {name, code, function_name}
-        test_inputs = data.get('test_inputs', [])
-        
-        if not code_versions or not test_inputs:
-            return jsonify({'error': 'Code versions and test inputs are required'}), 400
-        
-        if not advanced_analyzer or not advanced_analyzer.performance_analyzer:
-            return jsonify({'error': 'Performance analyzer not available'}), 500
-        
-        benchmark_results = {}
-        
-        for version in code_versions:
-            name = version['name']
-            code = version['code']
-            function_name = version['function_name']
+            with st.spinner('🤖 Initializing analyzer...'):
+                # Initialize analyzer
+                analyzer = CodeAnalyzer()
+                # Map analysis types to config fields
+                enable_performance = 'Performance Profiling' in analysis_types
+                enable_security = 'Security Scan' in analysis_types
+                enable_rag = 'Cloud Integration' in analysis_types or evals_on  # fallback to evals_on for RAG
+                enable_multimodal = 'Container/K8s' in analysis_types
+                config = AnalysisConfig(
+                    enable_rag=enable_rag,
+                    enable_performance=enable_performance,
+                    enable_security=enable_security,
+                    enable_multimodal=enable_multimodal
+                )
+                advanced = AdvancedCodeAnalyzer(config)
             
-            try:
-                # Execute code and get function
-                namespace = {}
-                exec(code, namespace)
-                func = namespace[function_name]
-                
-                # Benchmark with test inputs
-                version_results = []
-                for test_input in test_inputs:
-                    if isinstance(test_input, dict):
-                        result = advanced_analyzer.performance_analyzer.profile_function(
-                            func, **test_input
-                        )
-                    else:
-                        result = advanced_analyzer.performance_analyzer.profile_function(
-                            func, *test_input
-                        )
+            # Handle repository analysis
+            if repo_url:
+                with st.spinner('📥 Cloning repository...'):
+                    temp_dir = 'temp_repo'
+                    if os.path.exists(temp_dir):
+                        shutil.rmtree(temp_dir)
                     
-                    version_results.append({
-                        'input': test_input,
-                        'execution_time': result['execution_time'],
-                        'profile_stats': result['profile_stats']
-                    })
-                
-                benchmark_results[name] = version_results
-                
-            except Exception as e:
-                benchmark_results[name] = {'error': str(e)}
-        
-        # Find the fastest version for each test case
-        fastest_versions = []
-        for i, test_input in enumerate(test_inputs):
-            fastest = None
-            fastest_time = float('inf')
+                    try:
+                        git.Repo.clone_from(repo_url, temp_dir)
+                        st.success(f"✅ Repository cloned successfully!")
+                        
+                        # Read all code files from the repository
+                        code_input = ""
+                        for root, dirs, files in os.walk(temp_dir):
+                            for file in files:
+                                if file.endswith(('.py', '.js', '.java', '.cpp', '.c', '.cs', '.php', '.rb', '.go', '.rs', '.swift', '.kt')):
+                                    file_path = os.path.join(root, file)
+                                    try:
+                                        with open(file_path, 'r', encoding='utf-8') as f:
+                                            code_input += f"\n# File: {file}\n{f.read()}\n"
+                                    except Exception as e:
+                                        st.warning(f"⚠️ Could not read {file}: {str(e)}")
+                        
+                        # Clean up temp directory
+                        shutil.rmtree(temp_dir)
+                        
+                    except Exception as e:
+                        st.error(f"❌ Failed to clone repository: {str(e)}")
+                        st.stop()
             
-            for name, results in benchmark_results.items():
-                if 'error' not in results and i < len(results):
-                    time = results[i]['execution_time']
-                    if time < fastest_time:
-                        fastest_time = time
-                        fastest = name
+            # Perform analysis
+            with st.spinner('🔍 Analyzing code...'):
+                result = advanced.analyze_code_advanced(code_input, model=llm_choice.lower())
             
-            fastest_versions.append({
-                'test_case': i + 1,
-                'fastest': fastest,
-                'time': fastest_time
-            })
+            # Display results
+            st.markdown("---")
+            st.markdown("### 📊 Analysis Report")
+            
+            # Create tabs for different sections
+            tab1, tab2, tab3, tab4 = st.tabs(["🎯 Summary", "🐛 Issues", "💡 Suggestions", "📈 Metrics"])
+            
+            with tab1:
+                st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+                st.markdown("#### Analysis Summary")
+                if hasattr(result, 'summary'):
+                    st.write(result.summary)
+                else:
+                    st.write(str(result))
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with tab2:
+                st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+                st.markdown("#### Potential Issues")
+                if hasattr(result, 'potential_bugs'):
+                    for bug in result.potential_bugs:
+                        st.error(f"🐛 {bug}")
+                else:
+                    st.info("No major issues detected!")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with tab3:
+                st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+                st.markdown("#### Improvement Suggestions")
+                if hasattr(result, 'improvement_suggestions'):
+                    for suggestion in result.improvement_suggestions:
+                        st.info(f"💡 {suggestion}")
+                else:
+                    st.success("Code looks good! No major improvements needed.")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with tab4:
+                st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+                st.markdown("#### Quality Metrics")
+                if hasattr(result, 'code_quality_score'):
+                    st.metric("Quality Score", f"{result.code_quality_score}/100")
+                if hasattr(result, 'execution_time'):
+                    st.metric("Analysis Time", f"{result.execution_time:.2f}s")
+                if hasattr(result, 'model_name'):
+                    st.metric("Model Used", result.model_name)
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Success message
+            st.success("🎉 Analysis completed successfully!")
         
-        return jsonify({
-            'benchmark_results': benchmark_results,
-            'fastest_versions': fastest_versions
-        })
-        
-    except Exception as e:
-        print(f"Error in benchmark_alternatives: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        except Exception as e:
+            st.error(f'❌ Failed: {str(e)}')
+            st.markdown('<div class="error-box">', unsafe_allow_html=True)
+            st.markdown("**Error Details:**")
+            st.code(str(e))
+            st.markdown('</div>', unsafe_allow_html=True)
 
-# Dashboard routes
-@app.route('/dashboard')
-def dashboard_page():
-    """Dashboard page with quality trends."""
-    return render_template('dashboard.html')
-
-@app.route('/api/dashboard/report', methods=['GET'])
-def get_dashboard_report():
-    """Get dashboard report data."""
-    try:
-        if not dashboard:
-            return jsonify({'error': 'Dashboard not available'}), 500
-        
-        days = request.args.get('days', 30, type=int)
-        report = dashboard.generate_dashboard_report(days=days)
-        
-        # Convert dataclass to dict for JSON serialization
-        report_dict = {
-            'overall_quality_trend': {
-                'metric_name': report.overall_quality_trend.metric_name,
-                'values': report.overall_quality_trend.values,
-                'timestamps': report.overall_quality_trend.timestamps,
-                'trend_direction': report.overall_quality_trend.trend_direction,
-                'trend_strength': report.overall_quality_trend.trend_strength,
-                'average_value': report.overall_quality_trend.average_value,
-                'min_value': report.overall_quality_trend.min_value,
-                'max_value': report.overall_quality_trend.max_value
-            },
-            'language_breakdown': report.language_breakdown,
-            'model_performance': report.model_performance,
-            'top_issues': report.top_issues,
-            'improvement_areas': report.improvement_areas,
-            'recommendations': report.recommendations,
-            'generated_at': report.generated_at,
-            'time_period': report.time_period,
-            'total_analyses': report.total_analyses
-        }
-        
-        return jsonify(report_dict)
-        
-    except Exception as e:
-        print(f"Error in get_dashboard_report: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/dashboard/charts', methods=['GET'])
-def get_dashboard_charts():
-    """Get dashboard chart images."""
-    try:
-        if not dashboard:
-            return jsonify({'error': 'Dashboard not available'}), 500
-        
-        days = request.args.get('days', 30, type=int)
-        charts = dashboard.generate_charts(days=days)
-        
-        return jsonify(charts)
-        
-    except Exception as e:
-        print(f"Error in get_dashboard_charts: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/dashboard/metrics', methods=['GET'])
-def get_dashboard_metrics():
-    """Get raw metrics data."""
-    try:
-        if not dashboard:
-            return jsonify({'error': 'Dashboard not available'}), 500
-        
-        days = request.args.get('days', 30, type=int)
-        language_filter = request.args.get('language')
-        model_filter = request.args.get('model')
-        
-        metrics = dashboard.get_metrics(days=days, language_filter=language_filter, model_filter=model_filter)
-        
-        # Convert metrics to dict
-        metrics_dict = []
-        for metric in metrics:
-            metrics_dict.append({
-                'timestamp': metric.timestamp,
-                'file_path': metric.file_path,
-                'language': metric.language,
-                'quality_score': metric.quality_score,
-                'model_name': metric.model_name,
-                'execution_time': metric.execution_time,
-                'bug_count': metric.bug_count,
-                'suggestion_count': metric.suggestion_count,
-                'complexity_score': metric.complexity_score,
-                'performance_score': metric.performance_score,
-                'security_score': metric.security_score,
-                'maintainability_score': metric.maintainability_score
-            })
-        
-        return jsonify(metrics_dict)
-        
-    except Exception as e:
-        print(f"Error in get_dashboard_metrics: {e}")
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-if __name__ == '__main__':
-    # Create directory for templates if it doesn't exist
-    os.makedirs(os.path.join(os.path.dirname(__file__), 'templates'), exist_ok=True)
-    # Create directory for static files if it doesn't exist
-    os.makedirs(os.path.join(os.path.dirname(__file__), 'static'), exist_ok=True)
-    
-    if not analyzer:
-        print("\nWarning: Starting server with no available models.")
-        print("The web interface will display an error message.")
-        print("Please add your API keys to the .env file and restart the server.\n")
-    
-    if not ADVANCED_FEATURES_AVAILABLE:
-        print("\nWarning: Advanced features are not available.")
-        print("Some functionality will be limited.")
-        print("Please check your dependencies and configuration.\n")
-    
-    # Get port from environment variable for production deployment
-    port = int(os.environ.get('PORT', 5000))
-    host = os.environ.get('HOST', '127.0.0.1')
-    debug = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
-    
-    print(f"Starting server on {host}:{port} (debug={debug})")
-    app.run(debug=debug, host=host, port=port)
+# Footer
+st.markdown("---")
+st.markdown(
+    """
+    <div style='text-align: center; color: #666; padding: 2rem;'>
+        <p>🤖 Powered by Advanced AI Code Analysis | Built with Streamlit</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)

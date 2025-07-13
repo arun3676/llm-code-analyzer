@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 import traceback
 import concurrent.futures
 import re
+import logging
+import shutil
 
 # Load environment variables at the top of the file
 load_dotenv()
@@ -19,16 +21,16 @@ try:
         from langchain_anthropic import ChatAnthropic
         ANTHROPIC_AVAILABLE = True
     except ImportError:
-        print("Warning: langchain_anthropic not available. Falling back to langchain.chat_models")
+        logging.warning('langchain_anthropic missing - fallback to basic mode')
         try:
             from langchain.chat_models import ChatAnthropic
             ANTHROPIC_AVAILABLE = True
         except ImportError:
-            print("Error: Could not import ChatAnthropic from any package")
+            logging.warning('langchain.chat_models missing - fallback to basic mode')
             ANTHROPIC_AVAILABLE = False
             
 except ImportError as e:
-    print(f"Error importing required packages: {e}")
+    logging.warning(f'langchain missing - fallback to basic mode: {e}')
     raise
 
 import json
@@ -44,7 +46,7 @@ try:
     from .rag_assistant import RAGCodeAssistant
     RAG_AVAILABLE = True
 except ImportError:
-    print("Warning: RAG features not available")
+    logging.warning('rag_assistant missing - fallback to basic mode')
     RAG_AVAILABLE = False
 
 # Import fix suggestion generator
@@ -52,7 +54,7 @@ try:
     from .fix_suggestions import FixSuggestionGenerator
     FIX_SUGGESTIONS_AVAILABLE = True
 except ImportError:
-    print("Warning: Fix suggestions not available")
+    logging.warning('fix_suggestions missing - fallback to basic mode')
     FIX_SUGGESTIONS_AVAILABLE = False
 
 # Import language detector
@@ -60,7 +62,7 @@ try:
     from .language_detector import LanguageDetector
     LANGUAGE_DETECTOR_AVAILABLE = True
 except ImportError:
-    print("Warning: Language detector not available")
+    logging.warning('language_detector missing - fallback to basic mode')
     LANGUAGE_DETECTOR_AVAILABLE = False
 
 # Import new analyzers
@@ -68,21 +70,21 @@ try:
     from .framework_analyzer import FrameworkAnalyzer
     FRAMEWORK_ANALYZER_AVAILABLE = True
 except ImportError:
-    print("Warning: Framework analyzer not available")
+    logging.warning('framework_analyzer missing - fallback to basic mode')
     FRAMEWORK_ANALYZER_AVAILABLE = False
 
 try:
     from .cloud_analyzer import CloudAnalyzer
     CLOUD_ANALYZER_AVAILABLE = True
 except ImportError:
-    print("Warning: Cloud analyzer not available")
+    logging.warning('cloud_analyzer missing - fallback to basic mode')
     CLOUD_ANALYZER_AVAILABLE = False
 
 try:
     from .container_analyzer import ContainerAnalyzer
     CONTAINER_ANALYZER_AVAILABLE = True
 except ImportError:
-    print("Warning: Container analyzer not available")
+    logging.warning('container_analyzer missing - fallback to basic mode')
     CONTAINER_ANALYZER_AVAILABLE = False
 
 # DeepSeek wrapper using OpenAI SDK
@@ -132,11 +134,22 @@ DEFAULT_MERCURY_MODEL = "mercury"
 class CodeAnalyzer:
     """Main class for analyzing code using various LLM models with integrated RAG capabilities."""
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None, enable_rag: bool = True):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, enable_rag: bool = True, mock: bool = False):
         """Initialize the code analyzer with configuration."""
         self.config = config or DEFAULT_CONFIG
         self.evaluator = ModelEvaluator()
         self.enable_rag = enable_rag and RAG_AVAILABLE
+        self.mock = mock
+        
+        # Slim ChromaDB
+        try:
+            import chromadb
+            self.vector_db = chromadb.EphemeralClient()
+            # Example: limit to 50 chunks when adding texts
+            # self.vector_db.add_texts(texts[:50])  # Uncomment and adapt as needed
+            shutil.rmtree('chroma_data', ignore_errors=True)
+        except Exception as e:
+            logging.warning(f'ChromaDB slimming failed: {e}')
         
         # Initialize specialized analyzers
         if FRAMEWORK_ANALYZER_AVAILABLE:
@@ -157,28 +170,34 @@ class CodeAnalyzer:
         # Debug config
         print(f"Using config: {self.config}")
         
-        # Check for API keys
-        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-        anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
-        mercury_api_key = os.getenv("MERCURY_API_KEY")
+        # Check for API keys with proper validation
+        deepseek_api_key = os.environ.get("DEEPSEEK_API_KEY")
+        anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        mercury_api_key = os.environ.get("MERCURY_API_KEY")
         
-        if not deepseek_api_key:
-            print("WARNING: DEEPSEEK_API_KEY not found in environment variables")
+        if not deepseek_api_key and not mock:
+            raise ValueError('Missing DEEPSEEK_API_KEY - set in .env')
         else:
-            print(f"Found DeepSeek API key: {deepseek_api_key[:5]}...{deepseek_api_key[-4:]}")
+            print(f"Found DeepSeek API key: {deepseek_api_key[:5]}...{deepseek_api_key[-4:] if deepseek_api_key else 'None'}")
         
-        if not anthropic_api_key:
-            print("WARNING: ANTHROPIC_API_KEY not found in environment variables")
+        if not anthropic_api_key and not mock:
+            raise ValueError('Missing ANTHROPIC_API_KEY - set in .env')
         else:
-            print(f"Found Anthropic API key: {anthropic_api_key[:5]}...{anthropic_api_key[-4:]}")
+            print(f"Found Anthropic API key: {anthropic_api_key[:5]}...{anthropic_api_key[-4:] if anthropic_api_key else 'None'}")
         
-        if not mercury_api_key:
-            print("WARNING: MERCURY_API_KEY not found in environment variables")
+        if not mercury_api_key and not mock:
+            raise ValueError('Missing MERCURY_API_KEY - set in .env')
         else:
-            print(f"Found Mercury API key: {mercury_api_key[:5]}...{mercury_api_key[-4:]}")
+            print(f"Found Mercury API key: {mercury_api_key[:5]}...{mercury_api_key[-4:] if mercury_api_key else 'None'}")
         
         # Initialize LLM clients
         self.models = {}
+        
+        if mock:
+            # Mock mode for testing
+            self.models["mock"] = lambda prompt: type('MockResponse', (), {'content': 'Mock response: Analyzed'})()
+            print("Initialized in mock mode")
+            return
         
         # Register DeepSeek
         if deepseek_api_key:
@@ -303,256 +322,261 @@ class CodeAnalyzer:
             file_path: Path to the file containing the code
             language: Optional language of the code
             mode: Analysis mode ('quick' or 'thorough')
-                - 'quick': Fast analysis with 2 bugs/suggestions, 600 tokens
-                - 'thorough': Optimized for 4GB memory - 5 bugs/suggestions, 1200 tokens, RAG enabled with memory optimizations
             
         Returns:
             CodeAnalysisResult object containing analysis results
         """
-        if model not in self.models:
-            raise ValueError(f"Unsupported model: {model}. Available models: {list(self.models.keys())}")
-            
-        # Always use override if set, else detect
-        detected_language = language
-        if not detected_language and self.language_detector:
-            lang_info = self.language_detector.detect_language(code, file_path)
-            detected_language = lang_info.name
-        if not detected_language:
-            detected_language = 'python'
-        
-        # Get code analysis
-        llm = self.models[model]
-        
-        # Add language context to prompt
-        lang_context = f"The code is written in {detected_language}. "
-        
-        # Model-specific strict prompts for quick mode
-        if mode == "quick":
-            if model == "claude":
-                analysis_prompt = (
-                    f"{lang_context}Analyze the following code and return up to 1 bug and 1 suggestion, in valid JSON. "
-                    "Do NOT return code, markdown, or code blocks. Only return a short JSON analysis. "
-                    "If you see code, do not repeat it, only analyze.\nCode:\n{code}"
-                ).replace("{code}", code)
-                doc_prompt = (
-                    f"{lang_context}Summarize what this code does in 1-2 sentences. "
-                    "Do NOT return code, markdown, or code blocks. Only return a summary."
-                )
-            elif model == "mercury":
-                analysis_prompt = (
-                    f"{lang_context}Analyze the following code and return up to 1 bug and 1 suggestion, in valid JSON. "
-                    "Do NOT return code, markdown, or code blocks. Only return a short JSON analysis. "
-                    "If you see code, do not repeat it, only analyze.\nCode:\n{code}"
-                ).replace("{code}", code)
-                doc_prompt = (
-                    f"{lang_context}Summarize what this code does in 1-2 sentences. "
-                    "Do NOT return code, markdown, or code blocks. Only return a summary."
-                )
-            else:  # deepseek or others
-                analysis_prompt = f"{lang_context}Analyze the following code and return up to 1 bug and 1 suggestion, in valid JSON. Be concise.\nCode:\n{code}"
-                doc_prompt = f"{lang_context}Summarize what this code does in 1-2 sentences."
-            max_tokens = 400
-            analysis_timeout = 20
-            do_rag = False
-            do_fixes = False
-            do_specialized = False
-        elif mode == "thorough":
-            # Optimized thorough mode for 4GB memory - RAG enabled but with memory optimizations
-            analysis_prompt = f"{lang_context}Analyze the following code thoroughly and return up to 5 bugs and 5 suggestions, in valid JSON. Be comprehensive but concise.\nCode:\n{code}"
-            doc_prompt = f"{lang_context}Provide detailed documentation for this code, explaining its purpose, parameters, and usage in 3-4 sentences."
-            max_tokens = 1200  # Reduced from 2000
-            do_rag = True  # Re-enabled RAG but with optimizations
-            do_fixes = False  # Disabled for memory optimization
-            do_specialized = False  # Disabled for memory optimization
-        else:
-            analysis_prompt = f"{lang_context}" + self.prompts['analysis'].format(code=code)
-            doc_prompt = f"{lang_context}" + self.prompts['documentation'].format(code=code)
-            max_tokens = 2000
-            do_rag = include_rag_suggestions
-            do_fixes = True
-            do_specialized = True
-        
-        # Parallelize LLM calls for quick mode, sequential for thorough mode to save memory
-        if mode == "thorough":
-            # Sequential calls for memory optimization
-            result = llm.invoke(analysis_prompt)
-            doc_result = llm.invoke(doc_prompt)
-        else:
-            # Parallel calls for other modes
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future_analysis = executor.submit(lambda: llm.invoke(analysis_prompt))
-                future_doc = executor.submit(lambda: llm.invoke(doc_prompt))
-                result = future_analysis.result()
-                doc_result = future_doc.result()
-        
-        analysis_result = result.content if hasattr(result, 'content') else str(result)
-        doc_result = doc_result.content if hasattr(doc_result, 'content') else str(doc_result)
-        
-        # Post-processing for Claude/Mercury quick mode
-        fallback_message = "This model could not provide a concise analysis. Try DeepSeek or use Thorough mode."
-        def is_code_or_markdown(text):
-            if not text:
-                return False
-            # Heuristic: code block, markdown, or just code
-            if text.strip().startswith("```") or re.match(r"^[ \t]*function|def |let |const |class |public |private |#include|import |package |var |<|</", text.strip()):
-                return True
-            if '```' in text or text.strip().startswith('#'):
-                return True
-            return False
         try:
-            parsed_result = parse_llm_response(analysis_result)
-            # If Claude/Mercury returns code/markdown or irrelevant, fallback
-            if mode == "quick" and model in ("claude", "mercury"):
-                # If the result is just code, markdown, or an irrelevant message, fallback
-                if (is_code_or_markdown(analysis_result) or
-                    (isinstance(parsed_result, dict) and not parsed_result.get("potential_bugs") and not parsed_result.get("improvement_suggestions"))):
-                    parsed_result = {
-                        "code_quality_score": 0,
-                        "potential_bugs": [fallback_message],
-                        "improvement_suggestions": [],
-                        "documentation": fallback_message
-                    }
-        except Exception as e:
-            parsed_result = {
-                "code_quality_score": 50,
-                "potential_bugs": [fallback_message],
-                "improvement_suggestions": [],
-                "documentation": fallback_message
-            }
-        # Post-process doc_result for Claude/Mercury
-        if mode == "quick" and model in ("claude", "mercury") and is_code_or_markdown(doc_result):
-            doc_result = fallback_message
-        
-        # In thorough mode, always fill empty fields with defaults
-        if mode == "thorough":
-            if not parsed_result.get("potential_bugs") or len(parsed_result["potential_bugs"]) == 0:
-                parsed_result["potential_bugs"] = ["No bugs detected."]
-            if not parsed_result.get("improvement_suggestions") or len(parsed_result["improvement_suggestions"]) == 0:
-                parsed_result["improvement_suggestions"] = ["No suggestions."]
-            if not doc_result or doc_result.strip() == "":
-                doc_result = "No documentation generated."
-        
-        # RAG and fix suggestions only in thorough mode
-        rag_suggestions = []
-        if do_rag and self.rag_assistant:
+            # Input validation
+            if not code or not code.strip():
+                raise ValueError('Empty code input')
+            
+            if model not in self.models:
+                raise ValueError(f"Unsupported model: {model}. Available models: {list(self.models.keys())}")
+                
+            # Always use override if set, else detect
+            detected_language = language
+            if not detected_language and hasattr(self, 'language_detector') and self.language_detector:
+                try:
+                    lang_info = self.language_detector.detect_language(code, file_path)
+                    detected_language = lang_info.name
+                except Exception as e:
+                    logging.warning(f'Language detection failed: {e}')
+                    detected_language = 'python'
+            if not detected_language:
+                detected_language = 'python'
+            
+            # Get code analysis
+            llm = self.models[model]
+            
+            # Add language context to prompt
+            lang_context = f"The code is written in {detected_language}. "
+            
+            # Model-specific strict prompts for quick mode
+            if mode == "quick":
+                if model == "claude":
+                    analysis_prompt = (
+                        f"{lang_context}Analyze the following code and return up to 2 bugs and 2 suggestions, in valid JSON. "
+                        "Do NOT return code, markdown, or code blocks. Only return a short JSON analysis. "
+                        "If you see code, do not repeat it, only analyze.\nCode:\n{code}"
+                    ).replace("{code}", code)
+                    doc_prompt = (
+                        f"{lang_context}Summarize what this code does in 2-3 sentences. "
+                        "Do NOT return code, markdown, or code blocks. Only return a summary."
+                    )
+                elif model == "mercury":
+                    analysis_prompt = (
+                        f"{lang_context}Analyze the following code and return up to 2 bugs and 2 suggestions, in valid JSON. "
+                        "Do NOT return code, markdown, or code blocks. Only return a short JSON analysis. "
+                        "If you see code, do not repeat it, only analyze.\nCode:\n{code}"
+                    ).replace("{code}", code)
+                    doc_prompt = (
+                        f"{lang_context}Summarize what this code does in 2-3 sentences. "
+                        "Do NOT return code, markdown, or code blocks. Only return a summary."
+                    )
+                else:  # deepseek or others
+                    analysis_prompt = f"{lang_context}Analyze the following code and return up to 2 bugs and 2 suggestions, in valid JSON. Be concise.\nCode:\n{code}"
+                    doc_prompt = f"{lang_context}Summarize what this code does in 2-3 sentences."
+                max_tokens = 600
+                do_rag = False
+                do_fixes = False
+            else:
+                analysis_prompt = f"{lang_context}" + self.prompts['analysis'].format(code=code)
+                doc_prompt = f"{lang_context}" + self.prompts['documentation'].format(code=code)
+                max_tokens = 2000
+                do_rag = include_rag_suggestions
+                do_fixes = True
+            
+            # Retry logic for LLM calls
+            def call_llm_with_retry(prompt, max_attempts=3):
+                for attempt in range(max_attempts):
+                    try:
+                        response = llm.invoke(prompt)
+                        return response
+                    except Exception as e:
+                        if attempt == max_attempts - 1:
+                            raise e
+                        logging.warning(f'LLM call attempt {attempt + 1} failed: {e}, retrying...')
+                        time.sleep(2 ** attempt)  # Exponential backoff
+            
+            # Parallelize LLM calls with retry
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_analysis = executor.submit(lambda: call_llm_with_retry(analysis_prompt))
+                future_doc = executor.submit(lambda: call_llm_with_retry(doc_prompt))
+                
+                try:
+                    result = future_analysis.result()
+                    doc_result = future_doc.result()
+                except Exception as e:
+                    logging.error(f'LLM calls failed after retries: {e}')
+                    raise
+            
+            analysis_result = result.content if hasattr(result, 'content') else str(result)
+            doc_result = doc_result.content if hasattr(doc_result, 'content') else str(doc_result)
+            
+            # Post-processing for Claude/Mercury quick mode
+            fallback_message = "This model could not provide a concise analysis. Try DeepSeek or use Thorough mode."
+            def is_code_or_markdown(text):
+                if not text:
+                    return False
+                # Heuristic: code block, markdown, or just code
+                if text.strip().startswith("```") or re.match(r"^[ \t]*function|def |let |const |class |public |private |#include|import |package |var |<|</", text.strip()):
+                    return True
+                if '```' in text or text.strip().startswith('#'):
+                    return True
+                return False
             try:
-                # Memory-optimized RAG: limit suggestions and use smaller search scope
-                rag_suggestions = self.rag_assistant.get_code_suggestions(
-                    code, detected_language, "Looking for similar patterns and improvements"
-                )
-                rag_count = 0
-                max_rag_suggestions = 2 if mode == "thorough" else 3  # Limit for memory optimization
-                for suggestion in rag_suggestions:
-                    if rag_count >= max_rag_suggestions:
-                        break
-                    explanation = suggestion.get('explanation', '')
-                    if explanation:
-                        short_expl = explanation.split('This code snippet')[0].strip()
-                        if len(short_expl) > 150:  # Reduced from 180 for memory optimization
-                            short_expl = short_expl[:150] + '...'
-                        parsed_result["improvement_suggestions"].append(f"RAG: {short_expl}")
-                        rag_count += 1
+                parsed_result = parse_llm_response(analysis_result)
+                # If Claude/Mercury returns code/markdown or irrelevant, fallback
+                if mode == "quick" and model in ("claude", "mercury"):
+                    # If the result is just code, markdown, or an irrelevant message, fallback
+                    if (is_code_or_markdown(analysis_result) or
+                        (isinstance(parsed_result, dict) and not parsed_result.get("potential_bugs") and not parsed_result.get("improvement_suggestions"))):
+                        parsed_result = {
+                            "code_quality_score": 0,
+                            "potential_bugs": [fallback_message],
+                            "improvement_suggestions": [],
+                            "documentation": fallback_message
+                        }
             except Exception as e:
-                print(f"RAG error (continuing without RAG): {e}")
-                pass
-        
-        # Run specialized analyzers
-        framework_analysis = None
-        cloud_analysis = None
-        container_analysis = None
-        
-        if do_specialized and self.framework_analyzer and file_path:
-            try:
-                framework_analysis = self.framework_analyzer.analyze_code(file_path, code)
-            except Exception as e:
-                print(f"Framework analysis error: {e}")
-        
-        if do_specialized and self.cloud_analyzer and file_path:
-            try:
-                cloud_analysis = self.cloud_analyzer.analyze_code(file_path, code)
-            except Exception as e:
-                print(f"Cloud analysis error: {e}")
-        
-        if do_specialized and self.container_analyzer and file_path:
-            try:
-                container_analysis = self.container_analyzer.analyze_code(file_path, code)
-            except Exception as e:
-                print(f"Container analysis error: {e}")
-        
-        # Add specialized analysis results to suggestions
-        if framework_analysis and framework_analysis.get('issues'):
-            for issue in framework_analysis['issues']:
-                parsed_result["improvement_suggestions"].append(
-                    f"Framework ({framework_analysis['framework']}): {issue['message']}"
-                )
-        
-        if cloud_analysis and cloud_analysis.get('issues'):
-            for issue in cloud_analysis['issues']:
-                parsed_result["improvement_suggestions"].append(
-                    f"Cloud ({cloud_analysis['platform']}): {issue['message']}"
-                )
-        
-        if container_analysis and container_analysis.get('issues'):
-            for issue in container_analysis['issues']:
-                parsed_result["improvement_suggestions"].append(
-                    f"Container ({container_analysis['config_type']}): {issue['message']}"
-                )
-        
-        # Create result object
-        result_obj = CodeAnalysisResult(
-            code_quality_score=parsed_result.get("code_quality_score", 50),
-            potential_bugs=parsed_result.get("potential_bugs", []),
-            improvement_suggestions=parsed_result.get("improvement_suggestions", []),
-            documentation=doc_result,
-            model_name=model,
-            execution_time=time.time()  # This will be set by the timer decorator
-        )
-        
-        # Fix suggestions only in thorough mode
-        if do_fixes and self.fix_generator:
-            try:
-                issues = []
-                for i, bug in enumerate(parsed_result.get("potential_bugs", [])):
-                    issues.append({
-                        'type': 'bug',
-                        'description': bug,
-                        'line_number': 0,
-                        'code_snippet': code[:200] + '...' if len(code) > 200 else code,
-                        'severity': 'medium'
-                    })
-                for i, suggestion in enumerate(parsed_result.get("improvement_suggestions", [])):
-                    if not suggestion.startswith('RAG:'):
+                logging.warning(f'Failed to parse LLM response: {e}')
+                parsed_result = {
+                    "code_quality_score": 50,
+                    "potential_bugs": [fallback_message],
+                    "improvement_suggestions": [],
+                    "documentation": fallback_message
+                }
+            # Post-process doc_result for Claude/Mercury
+            if mode == "quick" and model in ("claude", "mercury") and is_code_or_markdown(doc_result):
+                doc_result = fallback_message
+            
+            # In thorough mode, always fill empty fields with defaults
+            if mode == "thorough":
+                if not parsed_result.get("potential_bugs") or len(parsed_result["potential_bugs"]) == 0:
+                    parsed_result["potential_bugs"] = ["No bugs detected."]
+                if not parsed_result.get("improvement_suggestions") or len(parsed_result["improvement_suggestions"]) == 0:
+                    parsed_result["improvement_suggestions"] = ["No suggestions."]
+                if not doc_result or doc_result.strip() == "":
+                    doc_result = "No documentation generated."
+            
+            # RAG and fix suggestions only in thorough mode
+            rag_suggestions = []
+            if do_rag and hasattr(self, 'rag_assistant') and self.rag_assistant:
+                try:
+                    rag_suggestions = self.rag_assistant.get_code_suggestions(
+                        code, detected_language, "Looking for similar patterns and improvements"
+                    )
+                    rag_count = 0
+                    for suggestion in rag_suggestions:
+                        if rag_count >= 3:
+                            break
+                        explanation = suggestion.get('explanation', '')
+                        if explanation:
+                            short_expl = explanation.split('This code snippet')[0].strip()
+                            if len(short_expl) > 180:
+                                short_expl = short_expl[:180] + '...'
+                            parsed_result["improvement_suggestions"].append(f"RAG: {short_expl}")
+                            rag_count += 1
+                except Exception as e:
+                    logging.warning(f'RAG suggestions failed: {e}')
+            
+            # Run specialized analyzers
+            framework_analysis = None
+            cloud_analysis = None
+            container_analysis = None
+            
+            if hasattr(self, 'framework_analyzer') and self.framework_analyzer and file_path:
+                try:
+                    framework_analysis = self.framework_analyzer.analyze_code(file_path, code)
+                except Exception as e:
+                    logging.warning(f"Framework analysis error: {e}")
+            
+            if hasattr(self, 'cloud_analyzer') and self.cloud_analyzer and file_path:
+                try:
+                    cloud_analysis = self.cloud_analyzer.analyze_code(file_path, code)
+                except Exception as e:
+                    logging.warning(f"Cloud analysis error: {e}")
+            
+            if hasattr(self, 'container_analyzer') and self.container_analyzer and file_path:
+                try:
+                    container_analysis = self.container_analyzer.analyze_code(file_path, code)
+                except Exception as e:
+                    logging.warning(f"Container analysis error: {e}")
+            
+            # Add specialized analysis results to suggestions
+            if framework_analysis and framework_analysis.get('issues'):
+                for issue in framework_analysis['issues']:
+                    parsed_result["improvement_suggestions"].append(
+                        f"Framework ({framework_analysis['framework']}): {issue['message']}"
+                    )
+            
+            if cloud_analysis and cloud_analysis.get('issues'):
+                for issue in cloud_analysis['issues']:
+                    parsed_result["improvement_suggestions"].append(
+                        f"Cloud ({cloud_analysis['platform']}): {issue['message']}"
+                    )
+            
+            if container_analysis and container_analysis.get('issues'):
+                for issue in container_analysis['issues']:
+                    parsed_result["improvement_suggestions"].append(
+                        f"Container ({container_analysis['config_type']}): {issue['message']}"
+                    )
+            
+            # Create result object
+            result_obj = CodeAnalysisResult(
+                code_quality_score=parsed_result.get("code_quality_score", 50),
+                potential_bugs=parsed_result.get("potential_bugs", []),
+                improvement_suggestions=parsed_result.get("improvement_suggestions", []),
+                documentation=doc_result,
+                model_name=model,
+                execution_time=time.time()  # This will be set by the timer decorator
+            )
+            
+            # Fix suggestions only in thorough mode
+            if do_fixes and hasattr(self, 'fix_generator') and self.fix_generator:
+                try:
+                    issues = []
+                    for i, bug in enumerate(parsed_result.get("potential_bugs", [])):
                         issues.append({
-                            'type': 'improvement',
-                            'description': suggestion,
+                            'type': 'bug',
+                            'description': bug,
                             'line_number': 0,
                             'code_snippet': code[:200] + '...' if len(code) > 200 else code,
-                            'severity': 'low'
+                            'severity': 'medium'
                         })
-                fix_suggestions = self.fix_generator.generate_fix_suggestions(
-                    code, issues, detected_language
-                )
-                result_obj.fix_suggestions = fix_suggestions
-            except Exception as e:
+                    for i, suggestion in enumerate(parsed_result.get("improvement_suggestions", [])):
+                        if not suggestion.startswith('RAG:'):
+                            issues.append({
+                                'type': 'improvement',
+                                'description': suggestion,
+                                'line_number': 0,
+                                'code_snippet': code[:200] + '...' if len(code) > 200 else code,
+                                'severity': 'low'
+                            })
+                    fix_suggestions = self.fix_generator.generate_fix_suggestions(
+                        code, issues, detected_language
+                    )
+                    result_obj.fix_suggestions = fix_suggestions
+                except Exception as e:
+                    logging.warning(f'Fix suggestions failed: {e}')
+                    result_obj.fix_suggestions = []
+            else:
                 result_obj.fix_suggestions = []
-        else:
-            result_obj.fix_suggestions = []
-        
-        # Get config values for timeout and memory
-        analysis_timeout = self.config.get('analysis', {}).get('timeout', 120)
-        max_memory_mb = self.config.get('analysis', {}).get('max_memory_mb', 4096)
-        
-        # Optional: Warn if memory usage exceeds max_memory_mb
-        try:
-            import psutil
-            process = psutil.Process()
-            mem_mb = process.memory_info().rss / (1024 * 1024)
-            if mem_mb > max_memory_mb * 0.95:
-                print(f"Warning: Memory usage is high ({mem_mb:.1f} MB / {max_memory_mb} MB). Analysis may be unstable.")
-        except ImportError:
-            pass
-        
-        return result_obj
+            
+            return result_obj
+            
+        except Exception as e:
+            logging.error(f'Analysis failed: {e}')
+            # Always return a valid result object even on failure
+            return CodeAnalysisResult(
+                code_quality_score=0,
+                potential_bugs=[f"Analysis failed: {str(e)}"],
+                improvement_suggestions=[],
+                documentation=f"Error during analysis: {str(e)}",
+                model_name=model,
+                execution_time=0,
+                fix_suggestions=[]
+            )
 
     def search_similar_code(self, query: str, top_k: int = 5, language_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """

@@ -304,9 +304,6 @@ Return only the JSON response, no additional text.
             return self._apply_python_pattern_fix(code, issue_type)
         elif language == 'javascript':
             return self._apply_javascript_pattern_fix(code, issue_type)
-        elif language == 'typescript':
-            # For now, use JavaScript logic, but can add TypeScript-specific logic here
-            return self._apply_javascript_pattern_fix(code, issue_type)
         else:
             return code
     

@@ -64,12 +64,7 @@ class LanguageDetector:
             },
             'typescript': {
                 'extensions': ['.ts', '.tsx'],
-                'keywords': [
-                    'interface ', 'type ', 'enum ', 'namespace ', 'declare ', ': string', ': number', ': boolean', ': any',
-                    'as ', 'implements ', 'readonly ', 'public ', 'private ', 'protected ', 'abstract ', 'import type',
-                    'export type', 'export interface', 'export enum', 'export namespace', 'export abstract', 'export declare',
-                    'import(', 'import type', 'import(', 'import type', 'import(', 'import type', 'import(', 'import type'
-                ],
+                'keywords': ['interface ', 'type ', 'enum ', 'namespace ', 'declare ', ': string', ': number'],
                 'version_patterns': [
                     r'typescript(\d+\.\d+)',
                     r'ts(\d+\.\d+)'
@@ -307,31 +302,16 @@ class LanguageDetector:
                         shebang=shebang
                     )
         
-        # Try keyword-based detection (improved for TypeScript)
+        # Try keyword-based detection
         scores = {}
-        ts_score = 0
-        ts_keywords_found = 0
         for lang, patterns in self.language_patterns.items():
             score = 0
             for keyword in patterns['keywords']:
                 if keyword in code:
                     score += 1
-                    if lang == 'typescript':
-                        ts_keywords_found += 1
             
             if score > 0:
                 scores[lang] = score / len(patterns['keywords'])
-            if lang == 'typescript':
-                ts_score = score
-        
-        # Prefer TypeScript if at least 2 TypeScript patterns are found
-        if ts_keywords_found >= 2:
-            version = self._extract_version(code, self.language_patterns['typescript'].get('version_patterns', []))
-            return LanguageInfo(
-                name='typescript',
-                version=version,
-                confidence=0.95
-            )
         
         if scores:
             # Get the language with highest score
