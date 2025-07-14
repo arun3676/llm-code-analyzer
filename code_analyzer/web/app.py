@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 
 # Import the required modules
 try:
-    from code_analyzer.main import CodeAnalyzer
-    from code_analyzer.advanced_analyzer import AdvancedCodeAnalyzer, AnalysisConfig
+    from code_analyzer.advanced_analyzer import AdvancedCodeAnalyzer
+    from code_analyzer.rag_assistant import RAGCodeAssistant
 except ImportError as e:
     st.error(f"Failed to import analyzer modules: {e}")
     st.stop()
@@ -231,35 +231,23 @@ if analyze_button or fix_button or security_button or performance_button:
     else:
         try:
             with st.spinner('🤖 Initializing analyzer...'):
-                from code_analyzer.advanced_analyzer import AdvancedCodeAnalyzer, AnalysisConfig
-                enable_rag = analyze_button
-                enable_security = security_button
-                enable_performance = performance_button
-                config = AnalysisConfig(
-                    enable_rag=enable_rag,
-                    enable_security=enable_security,
-                    enable_performance=enable_performance,
-                    enable_multimodal=False,
-                    codebase_path="." if enable_rag else None
-                )
-                advanced = AdvancedCodeAnalyzer(config)
-                # Use selected model
-                selected_model = model.lower()
+                analyzer = AdvancedCodeAnalyzer(model=model)
+                rag = RAGCodeAssistant()
                 # Run analysis based on button
                 if analyze_button:
-                    result = advanced.analyze_code_advanced(code_input, file_path='', model=selected_model)
+                    result = analyzer.analyze_code(code_input)
                     display_analysis_results(result, title="Analysis Results")
                 elif fix_button:
                     # Fix suggestions logic (slimmed)
-                    result = advanced.analyze_code_advanced(code_input, file_path='', model=selected_model)
-                    display_fix_suggestions(result.code_analysis.fix_suggestions)
+                    result = analyzer.analyze_code(code_input)
+                    display_fix_suggestions(result)
                 elif security_button:
-                    result = advanced.analyze_code_advanced(code_input, file_path='', model=selected_model)
-                    display_security_results(result.security_report)
+                    result = analyzer.analyze_code(code_input)
+                    display_security_results(result)
                 elif performance_button:
-                    result = advanced.analyze_code_advanced(code_input, file_path='', model=selected_model)
+                    result = analyzer.analyze_code(code_input)
                     st.markdown("### ⚡ Performance Report")
-                    st.write(result.performance_report)
+                    st.write(result)
         except Exception as e:
             st.error(f'❌ Analysis failed: {str(e)}')
             st.markdown('<div class="error-box">', unsafe_allow_html=True)
