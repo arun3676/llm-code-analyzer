@@ -19,8 +19,9 @@ from sentence_transformers import SentenceTransformer
 import tiktoken
 
 # LangChain imports for LLM integration
-from langchain_openai import OpenAI
+from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage
 
 @dataclass
@@ -57,16 +58,18 @@ class RAGCodeAssistant:
     and provide intelligent code suggestions.
     """
     
-    def __init__(self, codebase_path: str, embedding_model: str = "all-MiniLM-L6-v2"):
+    def __init__(self, codebase_path: str, embedding_model: str = "all-MiniLM-L6-v2", default_model: str = "openai"):
         """
         Initialize the RAG code assistant.
         
         Args:
             codebase_path: Path to the codebase to index
             embedding_model: Sentence transformer model to use for embeddings
+            default_model: Default LLM model to use ('openai', 'anthropic', 'deepseek', 'mercury', 'gemini')
         """
         self.codebase_path = Path(codebase_path)
         self.embedding_model = embedding_model
+        self.default_model = default_model.lower()
         
         # Initialize embedding model with CPU device
         print(f"Loading embedding model: {embedding_model}")
@@ -134,27 +137,62 @@ class RAGCodeAssistant:
         
         print("RAG Code Assistant initialized successfully!")
 
-    def analyze_code(self, code: str, language: str = "python", model: str = "openai") -> Dict:
+    def _get_llm_client(self, model: str = None):
+        """Get LLM client for the specified model."""
+        if model is None:
+            model = self.default_model
+        
+        model_lower = model.lower()
+        
+        try:
+            if model_lower == "openai":
+                return ChatOpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+            elif model_lower == "anthropic":
+                return ChatAnthropic(anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'))
+            elif model_lower == "deepseek":
+                return ChatOpenAI(
+                    base_url='https://api.deepseek.com/v1',
+                    api_key=os.getenv('DEEPSEEK_API_KEY')
+                )
+            elif model_lower == "mercury":
+                return ChatOpenAI(
+                    base_url='https://api.mercury.com/v1',
+                    api_key=os.getenv('MERCURY_API_KEY')
+                )
+            elif model_lower == "gemini":
+                return ChatGoogleGenerativeAI(
+                    google_api_key=os.getenv('GEMINI_API_KEY'),
+                    model="gemini-pro"
+                )
+            else:
+                # Default to OpenAI
+                return ChatOpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+        except Exception as e:
+            logging.error(f"Failed to initialize LLM client for {model}: {e}")
+            return None
+
+    def analyze_code(self, code: str, language: str = "python", model: str = None) -> Dict:
         """
         Analyze code using LLM via LangChain.
         
         Args:
             code: Code to analyze
             language: Programming language
-            model: LLM model to use ('openai', 'anthropic', etc.)
+            model: LLM model to use ('openai', 'anthropic', 'deepseek', 'mercury', 'gemini')
             
         Returns:
             Analysis results dictionary
         """
         try:
-            # Initialize LLM based on model choice
-            if model.lower() == "openai":
-                llm = OpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
-            elif model.lower() == "anthropic":
-                llm = ChatAnthropic(anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'))
-            else:
-                # Default to OpenAI
-                llm = OpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+            # Get LLM client
+            llm = self._get_llm_client(model)
+            if not llm:
+                return {
+                    'error': f"No LLM client available for model: {model}",
+                    'model_used': model,
+                    'language': language,
+                    'analysis_timestamp': datetime.now().isoformat()
+                }
             
             # Create analysis prompt
             prompt = f"""
@@ -176,7 +214,7 @@ class RAGCodeAssistant:
             # Parse response (this is a simplified version)
             analysis_result = {
                 'summary': str(response.content),
-                'model_used': model,
+                'model_used': model or self.default_model,
                 'language': language,
                 'analysis_timestamp': datetime.now().isoformat()
             }
@@ -187,7 +225,7 @@ class RAGCodeAssistant:
             logging.error(f"Error in analyze_code: {e}")
             return {
                 'error': f"Analysis failed: {str(e)}",
-                'model_used': model,
+                'model_used': model or self.default_model,
                 'language': language,
                 'analysis_timestamp': datetime.now().isoformat()
             }
