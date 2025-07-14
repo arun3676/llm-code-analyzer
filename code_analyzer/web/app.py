@@ -156,7 +156,7 @@ with st.sidebar:
     st.markdown("### ⚙️ Configuration")
     
     # Model selection with API key loading
-    model = st.selectbox("Choose Model", ["OpenAI", "Anthropic", "DeepSeek", "Mercury", "Gemini"])
+    model = st.selectbox("Model", ["OpenAI", "Anthropic", "DeepSeek", "Mercury", "Gemini"])
     
     # Load API keys from environment
     api_keys = {
@@ -164,7 +164,7 @@ with st.sidebar:
         "Anthropic": os.getenv('ANTHROPIC_API_KEY'),
         "DeepSeek": os.getenv('DEEPSEEK_API_KEY'),
         "Mercury": os.getenv('MERCURY_API_KEY'),
-        "Gemini": os.getenv('GOOGLE_API_KEY')
+        "Gemini": os.getenv('GEMINI_API_KEY')
     }
     
     # Show API key status
@@ -219,26 +219,22 @@ with st.sidebar:
         fix_button = st.button('🔧 Fix Suggestions', use_container_width=True)
     with col2:
         security_button = st.button('🛡️ Security Check', use_container_width=True)
-        rag_button = st.button('📚 Codebase Context', use_container_width=True)
+        performance_button = st.button('⚡ Performance Check', use_container_width=True)
 
 # Main content area for analysis output
 st.markdown('<div class="main-header"><h1>🤖 LLM Code Analyzer</h1><h3>AI-powered code analysis with RAG</h3></div>', unsafe_allow_html=True)
 
 # Analysis logic
-if analyze_button or fix_button or security_button or rag_button:
+if analyze_button or fix_button or security_button or performance_button:
     if not code_input and not repo_url:
         st.error('❌ No code provided. Please paste code or upload a file.')
     else:
         try:
             with st.spinner('🤖 Initializing analyzer...'):
-                # Initialize analyzer with lite RAG
                 from code_analyzer.advanced_analyzer import AdvancedCodeAnalyzer, AnalysisConfig
-                
-                # Configure based on button pressed
-                enable_rag = rag_button or analyze_button
-                enable_security = security_button or analyze_button
-                enable_performance = analyze_button
-                
+                enable_rag = analyze_button
+                enable_security = security_button
+                enable_performance = performance_button
                 config = AnalysisConfig(
                     enable_rag=enable_rag,
                     enable_security=enable_security,
@@ -247,66 +243,23 @@ if analyze_button or fix_button or security_button or rag_button:
                     codebase_path="." if enable_rag else None
                 )
                 advanced = AdvancedCodeAnalyzer(config)
-            
-            # Handle repository analysis
-            if repo_url:
-                with st.spinner('📥 Cloning repository...'):
-                    temp_dir = 'temp_repo'
-                    if os.path.exists(temp_dir):
-                        shutil.rmtree(temp_dir)
-                    
-                    try:
-                        git.Repo.clone_from(repo_url, temp_dir)
-                        st.success(f"✅ Repository cloned successfully!")
-                        
-                        # Read all code files from the repository
-                        code_input = ""
-                        for root, dirs, files in os.walk(temp_dir):
-                            for file in files:
-                                if file.endswith(('.py', '.js', '.java', '.cpp', '.c', '.cs', '.php', '.rb', '.go', '.rs', '.swift', '.kt')):
-                                    file_path = os.path.join(root, file)
-                                    try:
-                                        with open(file_path, 'r', encoding='utf-8') as f:
-                                            code_input += f"\n# File: {file}\n{f.read()}\n"
-                                    except Exception as e:
-                                        st.warning(f"⚠️ Could not read {file}: {str(e)}")
-                        
-                        # Clean up temp directory
-                        shutil.rmtree(temp_dir)
-                        
-                    except Exception as e:
-                        st.error(f"❌ Failed to clone repository: {str(e)}")
-                        st.stop()
-            
-            # Perform analysis based on button
-            if analyze_button:
-                with st.spinner('🔍 Performing comprehensive analysis...'):
-                    result = advanced.analyze_code_advanced(code_input, model=model.lower())
-                display_analysis_results(result, "Comprehensive Analysis")
-                
-            elif fix_button:
-                with st.spinner('🔧 Generating fix suggestions...'):
-                    # Use RAG assistant for fix suggestions
-                    if hasattr(advanced, 'rag_assistant') and advanced.rag_assistant:
-                        suggestions = advanced.rag_assistant.get_code_suggestions(code_input, "python", "Looking for fixes and improvements")
-                        display_fix_suggestions(suggestions)
-                    else:
-                        st.error("RAG assistant not available for fix suggestions")
-                        
-            elif security_button:
-                with st.spinner('🛡️ Performing security analysis...'):
-                    security_result = advanced._analyze_with_llm(code_input, "python", model.lower(), "security")
-                    display_security_results(security_result)
-                    
-            elif rag_button:
-                with st.spinner('📚 Searching codebase context...'):
-                    if hasattr(advanced, 'rag_assistant') and advanced.rag_assistant:
-                        # Search for similar code in codebase
-                        search_results = advanced.rag_assistant.search_code(code_input, top_k=5)
-                        display_rag_results(search_results)
-                    else:
-                        st.error("RAG assistant not available")
-        
+                # Use selected model
+                selected_model = model.lower()
+                # Run analysis based on button
+                if analyze_button:
+                    result = advanced.analyze_code_advanced(code_input, file_path='', model=selected_model)
+                    display_analysis_results(result, title="Analysis Results")
+                elif fix_button:
+                    # Fix suggestions logic (slimmed)
+                    result = advanced.analyze_code_advanced(code_input, file_path='', model=selected_model)
+                    display_fix_suggestions(result.code_analysis.fix_suggestions)
+                elif security_button:
+                    result = advanced.analyze_code_advanced(code_input, file_path='', model=selected_model)
+                    display_security_results(result.security_report)
+                elif performance_button:
+                    result = advanced.analyze_code_advanced(code_input, file_path='', model=selected_model)
+                    st.markdown("### ⚡ Performance Report")
+                    st.write(result.performance_report)
         except Exception as e:
             st.error(f'❌ Analysis failed: {str(e)}')
             st.markdown('<div class="error-box">', unsafe_allow_html=True)
