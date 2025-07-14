@@ -92,10 +92,14 @@ class AdvancedCodeAnalyzer:
     Advanced code analyzer that integrates multiple analysis capabilities.
     """
     
-    def __init__(self, config: AnalysisConfig):
+    def __init__(self, config: AnalysisConfig = None, model='OpenAI'):
         """Initialize the advanced code analyzer with API-based LLMs."""
+        if config is None:
+            config = AnalysisConfig()
         self.config = config
         self.base_analyzer = CodeAnalyzer()
+        self.model = model
+        self.llm = self._get_llm(model)
         
         # Initialize LLM clients for different APIs
         self.llm_clients = {}
@@ -103,6 +107,32 @@ class AdvancedCodeAnalyzer:
         
         # Initialize advanced features
         self._initialize_advanced_features()
+    
+    def _get_llm(self, model):
+        """Get LLM client for the specified model."""
+        if model == 'OpenAI':
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+        elif model == 'Anthropic':
+            from langchain_anthropic import ChatAnthropic
+            return ChatAnthropic(anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'))
+        elif model == 'DeepSeek':
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(base_url='https://api.deepseek.com/v1', api_key=os.getenv('DEEPSEEK_API_KEY'))
+        elif model == 'Mercury':
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(base_url='https://api.mercury.com/v1', api_key=os.getenv('MERCURY_API_KEY'))
+        elif model == 'Gemini':
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            return ChatGoogleGenerativeAI(google_api_key=os.getenv('GEMINI_API_KEY'))
+        else:
+            # Default to OpenAI
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+    
+    def analyze_code(self, code):
+        """Simple code analysis method."""
+        return self.llm.invoke(f"Analyze code: {code}")
     
     def _initialize_llm_clients(self):
         """Initialize LLM clients for different API providers."""
