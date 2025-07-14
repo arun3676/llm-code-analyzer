@@ -12,6 +12,11 @@ from pathlib import Path
 from datetime import datetime
 import logging
 
+# LangChain imports for API-based LLMs
+from langchain_anthropic import Anthropic
+from langchain_openai import OpenAI
+from langchain.schema import HumanMessage
+
 # Import our new modules with error handling
 try:
     from .rag_assistant import RAGCodeAssistant
@@ -47,15 +52,6 @@ except ImportError:
 from .main import CodeAnalyzer
 from .models import CodeAnalysisResult
 
-# Quantization imports
-try:
-    from peft import LoraConfig, get_peft_model
-    from bitsandbytes import load_in_4bit
-except ImportError:
-    LoraConfig = None
-    get_peft_model = None
-    load_in_4bit = None
-
 @dataclass
 class AdvancedAnalysisResult:
     """Complete advanced analysis result combining all analysis types."""
@@ -89,22 +85,145 @@ class AnalysisConfig:
     max_rag_results: int = 5
     security_scan_level: str = 'standard'  # 'basic', 'standard', 'comprehensive'
     performance_analysis_level: str = 'standard'  # 'basic', 'standard', 'comprehensive'
-    quant_enabled: bool = True
-    force_quant: bool = True
 
 class AdvancedCodeAnalyzer:
     """
     Advanced code analyzer that integrates multiple analysis capabilities.
     """
     
-    def __init__(self, config):
-        from peft import LoraConfig, get_peft_model
-        from bitsandbytes import load_in_4bit
-        self.llm = load_in_4bit(self.llm, device_map='auto', load_in_8bit=False)
-        lora_config = LoraConfig(r=4, lora_alpha=8, target_modules=['q_proj', 'v_proj'])
-        self.llm = get_peft_model(self.llm, lora_config)
-        super().__init__(config)
-        logging.info('Forced 4-bit LoRA quantization')
+    def __init__(self, config: AnalysisConfig):
+        """Initialize the advanced code analyzer with API-based LLMs."""
+        self.config = config
+        self.base_analyzer = CodeAnalyzer()
+        
+        # Initialize LLM clients for different APIs
+        self.llm_clients = {}
+        self._initialize_llm_clients()
+        
+        # Initialize advanced features
+        self._initialize_advanced_features()
+    
+    def _initialize_llm_clients(self):
+        """Initialize LLM clients for different API providers."""
+        try:
+            # Anthropic Claude
+            if os.getenv('ANTHROPIC_API_KEY'):
+                claude = Anthropic(anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'))
+                self.llm_clients['claude'] = claude
+            
+            # OpenAI
+            if os.getenv('OPENAI_API_KEY'):
+                openai_llm = OpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+                self.llm_clients['openai'] = openai_llm
+            
+            # DeepSeek (using OpenAI-compatible API)
+            if os.getenv('DEEPSEEK_API_KEY'):
+                deepseek = OpenAI(
+                    base_url='https://api.deepseek.com/v1',
+                    api_key=os.getenv('DEEPSEEK_API_KEY')
+                )
+                self.llm_clients['deepseek'] = deepseek
+            
+            # Mercury (using OpenAI-compatible API)
+            if os.getenv('MERCURY_API_KEY'):
+                mercury = OpenAI(
+                    base_url='https://api.mercury.com/v1',
+                    api_key=os.getenv('MERCURY_API_KEY')
+                )
+                self.llm_clients['mercury'] = mercury
+                
+        except Exception as e:
+            logging.error(f"Failed to initialize LLM clients: {e}")
+    
+    def _get_llm_client(self, model: str):
+        """Get LLM client for the specified model."""
+        model_lower = model.lower()
+        
+        # Model switcher for different APIs
+        if model_lower == 'deepseek':
+            return self.llm_clients.get('deepseek')
+        elif model_lower == 'claude':
+            return self.llm_clients.get('claude')
+        elif model_lower == 'openai':
+            return self.llm_clients.get('openai')
+        elif model_lower == 'mercury':
+            return self.llm_clients.get('mercury')
+        else:
+            # Default to first available client
+            return next(iter(self.llm_clients.values()), None)
+    
+    def _analyze_with_llm(self, code: str, language: str, model: str, analysis_type: str = "general") -> Dict:
+        """Analyze code using API-based LLM."""
+        llm_client = self._get_llm_client(model)
+        if not llm_client:
+            return {"error": f"No LLM client available for model: {model}"}
+        
+        try:
+            # Create analysis prompt based on type
+            if analysis_type == "general":
+                prompt = f"""
+                Analyze the following {language} code and provide:
+                1. A brief summary of what the code does
+                2. Potential issues or bugs
+                3. Improvement suggestions
+                4. Code quality score (0-100)
+                
+                Code:
+                {code}
+                
+                Please provide a structured analysis.
+                """
+            elif analysis_type == "security":
+                prompt = f"""
+                Perform a security analysis of the following {language} code:
+                
+                {code}
+                
+                Look for:
+                - SQL injection vulnerabilities
+                - XSS vulnerabilities
+                - Input validation issues
+                - Authentication/authorization problems
+                - Insecure dependencies
+                
+                Provide a detailed security assessment.
+                """
+            elif analysis_type == "performance":
+                prompt = f"""
+                Analyze the performance of the following {language} code:
+                
+                {code}
+                
+                Look for:
+                - Time complexity issues
+                - Memory usage problems
+                - Inefficient algorithms
+                - Bottlenecks
+                - Optimization opportunities
+                
+                Provide performance recommendations.
+                """
+            else:
+                prompt = f"Analyze this {language} code: {code}"
+            
+            # Get LLM response
+            response = llm_client.invoke([HumanMessage(content=prompt)])
+            
+            return {
+                'analysis': str(response.content),
+                'model_used': model,
+                'analysis_type': analysis_type,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logging.error(f"LLM analysis failed: {e}")
+            return {
+                'error': f"Analysis failed: {str(e)}",
+                'model_used': model,
+                'analysis_type': analysis_type,
+                'timestamp': datetime.now().isoformat()
+            }
     
     def _initialize_advanced_features(self):
         """Initialize advanced analysis features based on configuration."""
@@ -131,9 +250,7 @@ class AdvancedCodeAnalyzer:
             # Initialize performance analyzer
             if self.config.enable_performance and PERFORMANCE_AVAILABLE:
                 print("Initializing Performance Analyzer...")
-                # Pass the LLM client for AI-powered analysis
-                llm_client = self.base_analyzer.models.get('deepseek') if hasattr(self.base_analyzer, 'models') else None
-                self.performance_analyzer = PerformanceAnalyzer(llm_client=llm_client)
+                self.performance_analyzer = PerformanceAnalyzer()
             
             # Initialize multimodal analyzer
             if self.config.enable_multimodal and self.config.openai_api_key and MULTIMODAL_AVAILABLE:
@@ -151,13 +268,13 @@ class AdvancedCodeAnalyzer:
                             file_path: str = '',
                             model: str = 'deepseek') -> AdvancedAnalysisResult:
         """
-        Perform comprehensive code analysis using all available features.
+        Perform comprehensive code analysis using API-based LLMs.
         
         Args:
             code: Source code to analyze
             language: Programming language
             file_path: Path to the file being analyzed
-            model: LLM model to use for basic analysis
+            model: LLM model to use for analysis
             
         Returns:
             AdvancedAnalysisResult with all analysis results
@@ -165,11 +282,22 @@ class AdvancedCodeAnalyzer:
         start_time = time.time()
         features_used = []
         
-        # Basic code analysis
+        # Basic code analysis using API-based LLM
         code_analysis = None
         try:
-            code_analysis = self.base_analyzer.analyze_code(code, model=model)
-            features_used.append('basic_analysis')
+            llm_result = self._analyze_with_llm(code, language, model, "general")
+            if 'error' not in llm_result:
+                # Create a basic CodeAnalysisResult from LLM response
+                code_analysis = CodeAnalysisResult(
+                    code_quality_score=70,  # Default score, could be extracted from LLM response
+                    potential_bugs=[],
+                    improvement_suggestions=[],
+                    documentation=llm_result['analysis'],
+                    model_name=model,
+                    execution_time=time.time() - start_time,
+                    fix_suggestions=[]
+                )
+                features_used.append('basic_analysis')
         except Exception as e:
             print(f"Basic analysis failed: {e}")
         
@@ -184,25 +312,33 @@ class AdvancedCodeAnalyzer:
             except Exception as e:
                 print(f"RAG analysis failed: {e}")
         
-        # Security analysis
+        # Security analysis using API-based LLM
         security_report = None
-        if self.security_analyzer:
+        if self.config.enable_security:
             try:
-                security_report = self.security_analyzer.analyze_code_security(
-                    code, language, file_path
-                )
-                features_used.append('security_analysis')
+                security_result = self._analyze_with_llm(code, language, model, "security")
+                if 'error' not in security_result:
+                    security_report = {
+                        'analysis': security_result['analysis'],
+                        'model_used': model,
+                        'timestamp': security_result['timestamp']
+                    }
+                    features_used.append('security_analysis')
             except Exception as e:
                 print(f"Security analysis failed: {e}")
         
-        # Performance analysis
+        # Performance analysis using API-based LLM
         performance_report = None
-        if self.performance_analyzer:
+        if self.config.enable_performance:
             try:
-                performance_report = self.performance_analyzer.analyze_code_performance(
-                    code, language, file_path
-                )
-                features_used.append('performance_analysis')
+                performance_result = self._analyze_with_llm(code, language, model, "performance")
+                if 'error' not in performance_result:
+                    performance_report = {
+                        'analysis': performance_result['analysis'],
+                        'model_used': model,
+                        'timestamp': performance_result['timestamp']
+                    }
+                    features_used.append('performance_analysis')
             except Exception as e:
                 print(f"Performance analysis failed: {e}")
         

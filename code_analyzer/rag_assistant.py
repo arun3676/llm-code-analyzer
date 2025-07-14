@@ -18,6 +18,11 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 import tiktoken
 
+# LangChain imports for LLM integration
+from langchain_openai import OpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain.schema import HumanMessage
+
 @dataclass
 class CodeSnippet:
     """Represents a code snippet with metadata."""
@@ -63,19 +68,18 @@ class RAGCodeAssistant:
         self.codebase_path = Path(codebase_path)
         self.embedding_model = embedding_model
         
-        # Initialize embedding model
+        # Initialize embedding model with CPU device
         print(f"Loading embedding model: {embedding_model}")
         try:
-            self.embedder = SentenceTransformer(embedding_model, local_files_only=True)
+            self.embedder = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
         except Exception as e:
             logging.error(f"Embedding model load failed: {e}")
             self.embedder = None
         
-        # Initialize vector database
+        # Initialize in-memory vector database
         try:
-            self.chroma_client = chromadb.PersistentClient(
-                path="./chroma_db",
-                settings=Settings(anonymized_telemetry=False)
+            self.chroma_client = chromadb.Client(
+                Settings(anonymized_telemetry=False)
             )
             print("ChromaDB initialized successfully")
         except Exception as e:
@@ -129,6 +133,64 @@ class RAGCodeAssistant:
             self.tokenizer = None # Fallback to basic mode if tiktoken is not available
         
         print("RAG Code Assistant initialized successfully!")
+
+    def analyze_code(self, code: str, language: str = "python", model: str = "openai") -> Dict:
+        """
+        Analyze code using LLM via LangChain.
+        
+        Args:
+            code: Code to analyze
+            language: Programming language
+            model: LLM model to use ('openai', 'anthropic', etc.)
+            
+        Returns:
+            Analysis results dictionary
+        """
+        try:
+            # Initialize LLM based on model choice
+            if model.lower() == "openai":
+                llm = OpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+            elif model.lower() == "anthropic":
+                llm = ChatAnthropic(anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'))
+            else:
+                # Default to OpenAI
+                llm = OpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+            
+            # Create analysis prompt
+            prompt = f"""
+            Analyze the following {language} code and provide:
+            1. A brief summary of what the code does
+            2. Potential issues or bugs
+            3. Improvement suggestions
+            4. Code quality score (0-100)
+            
+            Code:
+            {code}
+            
+            Please provide a structured analysis.
+            """
+            
+            # Get LLM response
+            response = llm.invoke([HumanMessage(content=prompt)])
+            
+            # Parse response (this is a simplified version)
+            analysis_result = {
+                'summary': str(response.content),
+                'model_used': model,
+                'language': language,
+                'analysis_timestamp': datetime.now().isoformat()
+            }
+            
+            return analysis_result
+            
+        except Exception as e:
+            logging.error(f"Error in analyze_code: {e}")
+            return {
+                'error': f"Analysis failed: {str(e)}",
+                'model_used': model,
+                'language': language,
+                'analysis_timestamp': datetime.now().isoformat()
+            }
     
     def detect_language(self, file_path: str) -> str:
         """Detect programming language from file extension."""
@@ -218,7 +280,7 @@ class RAGCodeAssistant:
     
     def index_codebase(self, force_reindex: bool = False) -> int:
         """
-        Index the entire codebase for search.
+        Index the entire codebase for search using in-memory ChromaDB.
         
         Args:
             force_reindex: Whether to force reindexing even if already indexed
@@ -237,41 +299,42 @@ class RAGCodeAssistant:
         print("Starting codebase indexing...")
         print(f"Codebase path: {self.codebase_path}")
         
-        # Clear existing data
-        self.chroma_client.delete_collection("code_snippets")
-        self.collection = self.chroma_client.create_collection(
-            name="code_snippets",
-            metadata={"hnsw:space": "cosine"}
-        )
+        # Clear existing data and create new collection
+        try:
+            self.chroma_client.delete_collection("code_snippets")
+            self.collection = self.chroma_client.create_collection(
+                name="code_snippets",
+                metadata={"hnsw:space": "cosine"}
+            )
+        except Exception as e:
+            print(f"Error creating collection: {e}")
+            return 0
         
         indexed_files = 0
         total_snippets = 0
         
         # Walk through the codebase
-        for file_path in self.codebase_path.rglob('*'):
-            if file_path.is_file():
-                language = self.detect_language(str(file_path))
+        for root, dirs, files in os.walk(self.codebase_path):
+            # Skip hidden directories and common non-code directories
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['__pycache__', 'node_modules', '.git', 'venv', 'env']]
+            
+            for file in files:
+                file_path = os.path.join(root, file)
+                relative_path = os.path.relpath(file_path, self.codebase_path)
                 
-                # Debug output
-                print(f"Found file: {file_path} (language: {language})")
-                
-                # Skip non-code files and common directories
-                if (language == 'unknown' or 
-                    any(part.startswith('.') for part in file_path.parts) or
-                    any(part in ['node_modules', '__pycache__', '.git', 'venv', 'env'] for part in file_path.parts)):
-                    print(f"Skipping file: {file_path} (reason: language={language}, hidden={any(part.startswith('.') for part in file_path.parts)}, excluded_dir={any(part in ['node_modules', '__pycache__', '.git', 'venv', 'env'] for part in file_path.parts)})")
+                # Detect language
+                language = self.detect_language(file)
+                if language == 'unknown':
                     continue
                 
                 try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
+                    # Read file content
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         content = f.read()
                     
                     # Skip empty files
                     if not content.strip():
-                        print(f"Skipping empty file: {file_path}")
                         continue
-                    
-                    print(f"Processing file: {file_path} (size: {len(content)} chars)")
                     
                     # Extract metadata
                     metadata = self.extract_code_metadata(content, language)
@@ -279,14 +342,21 @@ class RAGCodeAssistant:
                     # Chunk the code
                     chunks = self.chunk_code(content)
                     
+                    # Index each chunk
                     for i, chunk in enumerate(chunks):
                         if not chunk.strip():
                             continue
                         
+                        # Generate embedding
+                        embedding = self.embedder.encode(chunk).tolist()
+                        
+                        # Create snippet ID
+                        snippet_id = hashlib.md5(f"{relative_path}_{i}".encode()).hexdigest()
+                        
                         # Create code snippet
                         snippet = CodeSnippet(
                             content=chunk,
-                            file_path=str(file_path.relative_to(self.codebase_path)),
+                            file_path=relative_path,
                             language=language,
                             function_name=metadata['function_name'],
                             class_name=metadata['class_name'],
@@ -297,13 +367,7 @@ class RAGCodeAssistant:
                             line_end=(i + 1) * 100
                         )
                         
-                        # Generate embedding
-                        embedding = self.embedder.encode(chunk).tolist()
-                        
-                        # Create unique ID
-                        snippet_id = hashlib.md5(f"{file_path}_{i}".encode()).hexdigest()
-                        
-                        # Store in vector database
+                        # Add to collection
                         self.collection.add(
                             embeddings=[embedding],
                             documents=[chunk],
