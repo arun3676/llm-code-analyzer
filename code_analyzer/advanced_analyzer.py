@@ -13,8 +13,9 @@ from datetime import datetime
 import logging
 
 # LangChain imports for API-based LLMs
-from langchain_anthropic import Anthropic
-from langchain_openai import OpenAI
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage
 
 # Import our new modules with error handling
@@ -106,19 +107,24 @@ class AdvancedCodeAnalyzer:
     def _initialize_llm_clients(self):
         """Initialize LLM clients for different API providers."""
         try:
-            # Anthropic Claude
-            if os.getenv('ANTHROPIC_API_KEY'):
-                claude = Anthropic(anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'))
-                self.llm_clients['claude'] = claude
-            
             # OpenAI
             if os.getenv('OPENAI_API_KEY'):
-                openai_llm = OpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+                openai_llm = ChatOpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
                 self.llm_clients['openai'] = openai_llm
+            
+            # Anthropic Claude
+            if os.getenv('ANTHROPIC_API_KEY'):
+                anthropic_llm = ChatAnthropic(anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'))
+                self.llm_clients['claude'] = anthropic_llm
+            
+            # Google Gemini
+            if os.getenv('GEMINI_API_KEY'):
+                gemini_llm = ChatGoogleGenerativeAI(google_api_key=os.getenv('GEMINI_API_KEY'))
+                self.llm_clients['gemini'] = gemini_llm
             
             # DeepSeek (using OpenAI-compatible API)
             if os.getenv('DEEPSEEK_API_KEY'):
-                deepseek = OpenAI(
+                deepseek = ChatOpenAI(
                     base_url='https://api.deepseek.com/v1',
                     api_key=os.getenv('DEEPSEEK_API_KEY')
                 )
@@ -126,7 +132,7 @@ class AdvancedCodeAnalyzer:
             
             # Mercury (using OpenAI-compatible API)
             if os.getenv('MERCURY_API_KEY'):
-                mercury = OpenAI(
+                mercury = ChatOpenAI(
                     base_url='https://api.mercury.com/v1',
                     api_key=os.getenv('MERCURY_API_KEY')
                 )
@@ -135,7 +141,7 @@ class AdvancedCodeAnalyzer:
         except Exception as e:
             logging.error(f"Failed to initialize LLM clients: {e}")
     
-    def _get_llm_client(self, model: str):
+    def model_switcher(self, model: str):
         """Get LLM client for the specified model."""
         model_lower = model.lower()
         
@@ -148,13 +154,15 @@ class AdvancedCodeAnalyzer:
             return self.llm_clients.get('openai')
         elif model_lower == 'mercury':
             return self.llm_clients.get('mercury')
+        elif model_lower == 'gemini':
+            return self.llm_clients.get('gemini')
         else:
             # Default to first available client
             return next(iter(self.llm_clients.values()), None)
     
     def _analyze_with_llm(self, code: str, language: str, model: str, analysis_type: str = "general") -> Dict:
         """Analyze code using API-based LLM."""
-        llm_client = self._get_llm_client(model)
+        llm_client = self.model_switcher(model)
         if not llm_client:
             return {"error": f"No LLM client available for model: {model}"}
         
