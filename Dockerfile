@@ -1,9 +1,8 @@
 FROM python:3.11-slim
 WORKDIR /app
-COPY requirements.txt requirements_force.txt .
-RUN pip install --no-cache-dir -r requirements_force.txt --no-deps
-COPY code_analyzer/web/app.py code_analyzer/web/
-COPY code_analyzer/main.py code_analyzer/
-COPY code_analyzer/advanced_analyzer.py code_analyzer/
+COPY requirements.txt .
+RUN pip install --no-cache-dir blinker==1.8.2 -r requirements.txt && pip check
+COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8080
-CMD ["streamlit", "run", "code_analyzer/web/app.py", "--server.port", "8080", "--server.address", "0.0.0.0"] 
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "main:app"] 

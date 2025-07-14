@@ -65,7 +65,11 @@ class RAGCodeAssistant:
         
         # Initialize embedding model
         print(f"Loading embedding model: {embedding_model}")
-        self.embedder = SentenceTransformer(embedding_model)
+        try:
+            self.embedder = SentenceTransformer(embedding_model, local_files_only=True)
+        except Exception as e:
+            logging.error(f"Embedding model load failed: {e}")
+            self.embedder = None
         
         # Initialize vector database
         try:

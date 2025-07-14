@@ -101,10 +101,10 @@ class AdvancedCodeAnalyzer:
         from peft import LoraConfig, get_peft_model
         from bitsandbytes import load_in_4bit
         self.llm = load_in_4bit(self.llm, device_map='auto', load_in_8bit=False)
-        lora_config = LoraConfig(r=2, lora_alpha=4, target_modules=['q_proj', 'v_proj'])
+        lora_config = LoraConfig(r=4, lora_alpha=8, target_modules=['q_proj', 'v_proj'])
         self.llm = get_peft_model(self.llm, lora_config)
         super().__init__(config)
-        logging.info('Forced ultra-strict 4-bit LoRA')
+        logging.info('Forced 4-bit LoRA quantization')
     
     def _initialize_advanced_features(self):
         """Initialize advanced analysis features based on configuration."""
