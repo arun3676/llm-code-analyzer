@@ -155,47 +155,36 @@ except Exception as e:
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
     
-    # LLM Model selection
-    llm_choice = st.selectbox(
-        'LLM Model:',
-        ['DeepSeek', 'Claude', 'OpenAI', 'Mercury'],
-        help="Choose your preferred AI model for analysis"
-    )
+    # Model selection with API key loading
+    model = st.selectbox("Choose Model", ["OpenAI", "Anthropic", "DeepSeek", "Mercury", "Gemini"])
     
-    # Analysis types
-    analysis_types = st.multiselect(
-        'Analysis Types:',
-        ['Code Quality & Bugs', 'Performance Profiling', 'Security Scan', 'Framework-Specific', 'Cloud Integration', 'Container/K8s'],
-        default=['Code Quality & Bugs'],
-        help="Select the types of analysis you want to perform"
-    )
+    # Load API keys from environment
+    api_keys = {
+        "OpenAI": os.getenv('OPENAI_API_KEY'),
+        "Anthropic": os.getenv('ANTHROPIC_API_KEY'),
+        "DeepSeek": os.getenv('DEEPSEEK_API_KEY'),
+        "Mercury": os.getenv('MERCURY_API_KEY'),
+        "Gemini": os.getenv('GOOGLE_API_KEY')
+    }
     
-    # Enable adaptive evaluations
-    evals_on = st.checkbox(
-        'Enable Adaptive Evals',
-        value=True,
-        help="Enable adaptive evaluations for more comprehensive analysis"
-    )
+    # Show API key status
+    if api_keys[model]:
+        st.success(f"✅ {model} API key found")
+    else:
+        st.error(f"❌ {model} API key missing")
     
     st.markdown("---")
-    st.markdown("### 📊 Quick Stats")
-    st.info("Ready to analyze your code!")
-
-# Main content area
-col1, col2 = st.columns([2, 1])
-
-with col1:
     st.markdown("### 📝 Code Input")
     
-    # Code input area
+    # Code input area in sidebar
     code_input = st.text_area(
         'Paste Code:',
-        height=300,
-        placeholder="Paste your code here or upload a file below...",
+        height=200,
+        placeholder="Paste your code here...",
         help="Enter the code you want to analyze"
     )
     
-    # File uploader
+    # File uploader in sidebar
     file_up = st.file_uploader(
         'Upload Code File:',
         type=['py', 'js', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'swift', 'kt'],
@@ -209,11 +198,8 @@ with col1:
             st.success(f"✅ File '{file_up.name}' loaded successfully!")
         except Exception as e:
             st.error(f"❌ Error reading file: {str(e)}")
-
-with col2:
-    st.markdown("### 🔗 Repository")
     
-    # GitHub repo URL input
+    # GitHub repo URL input in sidebar
     repo_url = st.text_input(
         'GitHub Repo URL (optional):',
         placeholder="https://github.com/username/repo",
@@ -222,34 +208,43 @@ with col2:
     
     if repo_url:
         st.info("🌐 Repository mode enabled")
+    
+    st.markdown("---")
+    st.markdown("### 🚀 Actions")
+    
+    # Action buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        analyze_button = st.button('🔍 Analyze', type="primary", use_container_width=True)
+        fix_button = st.button('🔧 Fix Suggestions', use_container_width=True)
+    with col2:
+        security_button = st.button('🛡️ Security Check', use_container_width=True)
+        rag_button = st.button('📚 Codebase Context', use_container_width=True)
 
-# Analysis button
-st.markdown("---")
-analyze_button = st.button(
-    '🚀 Analyze Now',
-    type="primary",
-    use_container_width=True
-)
+# Main content area for analysis output
+st.markdown('<div class="main-header"><h1>🤖 LLM Code Analyzer</h1><h3>AI-powered code analysis with RAG</h3></div>', unsafe_allow_html=True)
 
 # Analysis logic
-if analyze_button:
+if analyze_button or fix_button or security_button or rag_button:
     if not code_input and not repo_url:
-        st.error('❌ No code, bro – input something.')
+        st.error('❌ No code provided. Please paste code or upload a file.')
     else:
         try:
             with st.spinner('🤖 Initializing analyzer...'):
-                # Initialize analyzer
-                analyzer = CodeAnalyzer()
-                # Map analysis types to config fields
-                enable_performance = 'Performance Profiling' in analysis_types
-                enable_security = 'Security Scan' in analysis_types
-                enable_rag = 'Cloud Integration' in analysis_types or evals_on  # fallback to evals_on for RAG
-                enable_multimodal = 'Container/K8s' in analysis_types
+                # Initialize analyzer with lite RAG
+                from code_analyzer.advanced_analyzer import AdvancedCodeAnalyzer, AnalysisConfig
+                
+                # Configure based on button pressed
+                enable_rag = rag_button or analyze_button
+                enable_security = security_button or analyze_button
+                enable_performance = analyze_button
+                
                 config = AnalysisConfig(
                     enable_rag=enable_rag,
-                    enable_performance=enable_performance,
                     enable_security=enable_security,
-                    enable_multimodal=enable_multimodal
+                    enable_performance=enable_performance,
+                    enable_multimodal=False,
+                    codebase_path="." if enable_rag else None
                 )
                 advanced = AdvancedCodeAnalyzer(config)
             
@@ -283,66 +278,158 @@ if analyze_button:
                         st.error(f"❌ Failed to clone repository: {str(e)}")
                         st.stop()
             
-            # Perform analysis
-            with st.spinner('🔍 Analyzing code...'):
-                result = advanced.analyze_code_advanced(code_input, model=llm_choice.lower())
-            
-            # Display results
-            st.markdown("---")
-            st.markdown("### 📊 Analysis Report")
-            
-            # Create tabs for different sections
-            tab1, tab2, tab3, tab4 = st.tabs(["🎯 Summary", "🐛 Issues", "💡 Suggestions", "📈 Metrics"])
-            
-            with tab1:
-                st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
-                st.markdown("#### Analysis Summary")
-                if hasattr(result, 'summary'):
-                    st.write(result.summary)
-                else:
-                    st.write(str(result))
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with tab2:
-                st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
-                st.markdown("#### Potential Issues")
-                if hasattr(result, 'potential_bugs'):
-                    for bug in result.potential_bugs:
-                        st.error(f"🐛 {bug}")
-                else:
-                    st.info("No major issues detected!")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with tab3:
-                st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
-                st.markdown("#### Improvement Suggestions")
-                if hasattr(result, 'improvement_suggestions'):
-                    for suggestion in result.improvement_suggestions:
-                        st.info(f"💡 {suggestion}")
-                else:
-                    st.success("Code looks good! No major improvements needed.")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with tab4:
-                st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
-                st.markdown("#### Quality Metrics")
-                if hasattr(result, 'code_quality_score'):
-                    st.metric("Quality Score", f"{result.code_quality_score}/100")
-                if hasattr(result, 'execution_time'):
-                    st.metric("Analysis Time", f"{result.execution_time:.2f}s")
-                if hasattr(result, 'model_name'):
-                    st.metric("Model Used", result.model_name)
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Success message
-            st.success("🎉 Analysis completed successfully!")
+            # Perform analysis based on button
+            if analyze_button:
+                with st.spinner('🔍 Performing comprehensive analysis...'):
+                    result = advanced.analyze_code_advanced(code_input, model=model.lower())
+                display_analysis_results(result, "Comprehensive Analysis")
+                
+            elif fix_button:
+                with st.spinner('🔧 Generating fix suggestions...'):
+                    # Use RAG assistant for fix suggestions
+                    if hasattr(advanced, 'rag_assistant') and advanced.rag_assistant:
+                        suggestions = advanced.rag_assistant.get_code_suggestions(code_input, "python", "Looking for fixes and improvements")
+                        display_fix_suggestions(suggestions)
+                    else:
+                        st.error("RAG assistant not available for fix suggestions")
+                        
+            elif security_button:
+                with st.spinner('🛡️ Performing security analysis...'):
+                    security_result = advanced._analyze_with_llm(code_input, "python", model.lower(), "security")
+                    display_security_results(security_result)
+                    
+            elif rag_button:
+                with st.spinner('📚 Searching codebase context...'):
+                    if hasattr(advanced, 'rag_assistant') and advanced.rag_assistant:
+                        # Search for similar code in codebase
+                        search_results = advanced.rag_assistant.search_code(code_input, top_k=5)
+                        display_rag_results(search_results)
+                    else:
+                        st.error("RAG assistant not available")
         
         except Exception as e:
-            st.error(f'❌ Failed: {str(e)}')
+            st.error(f'❌ Analysis failed: {str(e)}')
             st.markdown('<div class="error-box">', unsafe_allow_html=True)
             st.markdown("**Error Details:**")
             st.code(str(e))
             st.markdown('</div>', unsafe_allow_html=True)
+
+# Helper functions for displaying results
+def display_analysis_results(result, title):
+    """Display comprehensive analysis results."""
+    st.markdown("---")
+    st.markdown(f"### 📊 {title}")
+    
+    # Create tabs for different sections
+    tab1, tab2, tab3, tab4 = st.tabs(["🎯 Summary", "🐛 Issues", "💡 Suggestions", "📈 Metrics"])
+    
+    with tab1:
+        st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+        st.markdown("#### Analysis Summary")
+        # User-friendly summary rendering
+        summary = None
+        code_quality_score = None
+        model_name = None
+        execution_time = None
+        # Try to extract from result or its attributes
+        if hasattr(result, 'summary') and result.summary:
+            summary = result.summary
+        elif hasattr(result, 'code_analysis') and hasattr(result.code_analysis, 'documentation'):
+            summary = result.code_analysis.documentation
+        if hasattr(result, 'code_analysis') and hasattr(result.code_analysis, 'code_quality_score'):
+            code_quality_score = result.code_analysis.code_quality_score
+        if hasattr(result, 'code_analysis') and hasattr(result.code_analysis, 'model_name'):
+            model_name = result.code_analysis.model_name
+        if hasattr(result, 'code_analysis') and hasattr(result.code_analysis, 'execution_time'):
+            execution_time = result.code_analysis.execution_time
+        # Render nicely
+        if summary:
+            st.write(summary)
+        else:
+            st.info("No summary available for this code.")
+        if code_quality_score is not None:
+            st.metric("Code Quality Score", f"{code_quality_score}/100")
+        if model_name:
+            st.metric("Model Used", model_name)
+        if execution_time is not None:
+            st.metric("Analysis Time", f"{execution_time:.2f}s")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with tab2:
+        st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+        st.markdown("#### Potential Issues")
+        if hasattr(result, 'potential_bugs'):
+            for bug in result.potential_bugs:
+                st.error(f"🐛 {bug}")
+        else:
+            st.info("No major issues detected!")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with tab3:
+        st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+        st.markdown("#### Improvement Suggestions")
+        if hasattr(result, 'improvement_suggestions'):
+            for suggestion in result.improvement_suggestions:
+                st.info(f"💡 {suggestion}")
+        else:
+            st.success("Code looks good! No major improvements needed.")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with tab4:
+        st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+        st.markdown("#### Quality Metrics")
+        if hasattr(result, 'code_analysis') and hasattr(result.code_analysis, 'code_quality_score'):
+            st.metric("Quality Score", f"{result.code_analysis.code_quality_score}/100")
+        if hasattr(result, 'analysis_duration'):
+            st.metric("Analysis Time", f"{result.analysis_duration:.2f}s")
+        if hasattr(result, 'features_used'):
+            st.write("**Features Used:**")
+            for feature in result.features_used:
+                st.write(f"• {feature}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+def display_fix_suggestions(suggestions):
+    """Display fix suggestions."""
+    st.markdown("---")
+    st.markdown("### 🔧 Fix Suggestions")
+    
+    if suggestions:
+        for i, suggestion in enumerate(suggestions, 1):
+            with st.expander(f"💡 Suggestion {i}: {suggestion.get('title', 'Code Improvement')}"):
+                st.write(suggestion.get('explanation', ''))
+                if suggestion.get('code'):
+                    st.code(suggestion['code'], language='python')
+                if suggestion.get('relevance_score'):
+                    st.metric("Relevance", f"{suggestion['relevance_score']:.2f}")
+    else:
+        st.info("No specific fix suggestions found. Try running a comprehensive analysis.")
+
+def display_security_results(security_result):
+    """Display security analysis results."""
+    st.markdown("---")
+    st.markdown("### 🛡️ Security Analysis")
+    
+    if 'error' not in security_result:
+        st.markdown('<div class="analysis-box">', unsafe_allow_html=True)
+        st.write(security_result['analysis'])
+        st.metric("Model Used", security_result['model_used'])
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.error(f"Security analysis failed: {security_result['error']}")
+
+def display_rag_results(search_results):
+    """Display RAG search results."""
+    st.markdown("---")
+    st.markdown("### 📚 Codebase Context")
+    
+    if search_results:
+        for i, result in enumerate(search_results, 1):
+            with st.expander(f"📄 {result.snippet.file_path} (Score: {result.relevance_score:.2f})"):
+                st.write(f"**Context:** {result.context}")
+                st.write(f"**Explanation:** {result.explanation}")
+                st.code(result.snippet.content, language='python')
+    else:
+        st.info("No similar code found in the codebase.")
 
 # Footer
 st.markdown("---")
