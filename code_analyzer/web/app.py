@@ -154,65 +154,57 @@ except Exception as e:
 # Sidebar configuration
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
-    
-    # Model selection with API key loading
+    # Model selection only
     model = st.selectbox("Model", ["OpenAI", "Anthropic", "DeepSeek", "Mercury", "Gemini"])
-    
-    # Load API keys from environment
-    api_keys = {
-        "OpenAI": os.getenv('OPENAI_API_KEY'),
-        "Anthropic": os.getenv('ANTHROPIC_API_KEY'),
-        "DeepSeek": os.getenv('DEEPSEEK_API_KEY'),
-        "Mercury": os.getenv('MERCURY_API_KEY'),
-        "Gemini": os.getenv('GEMINI_API_KEY')
+
+# Main header (keep only one)
+st.markdown('<div class="main-header"><h1>🤖 LLM Code Analyzer</h1><h3>AI-powered code beast with RAG</h3></div>', unsafe_allow_html=True)
+
+# Main content area: Centered code input and actions
+st.markdown("""
+    <style>
+    .centered-box {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        margin-top: 2rem;
     }
-    
-    # Show API key status
-    if api_keys[model]:
-        st.success(f"✅ {model} API key found")
-    else:
-        st.error(f"❌ {model} API key missing")
-    
-    st.markdown("---")
-    st.markdown("### 📝 Code Input")
-    
-    # Code input area in sidebar
+    .big-textarea textarea {
+        min-height: 300px !important;
+        font-size: 1.2rem !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+with st.container():
+    st.markdown('<div class="centered-box">', unsafe_allow_html=True)
     code_input = st.text_area(
-        'Paste Code:',
-        height=200,
+        'Paste your code here:',
+        height=300,
         placeholder="Paste your code here...",
-        help="Enter the code you want to analyze"
+        help="Enter the code you want to analyze",
+        key="main_code_input"
     )
-    
-    # File uploader in sidebar
     file_up = st.file_uploader(
         'Upload Code File:',
         type=['py', 'js', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'swift', 'kt'],
         help="Upload a code file to analyze"
     )
-    
-    # Handle file upload
     if file_up:
         try:
             code_input = file_up.read().decode('utf-8')
             st.success(f"✅ File '{file_up.name}' loaded successfully!")
         except Exception as e:
             st.error(f"❌ Error reading file: {str(e)}")
-    
-    # GitHub repo URL input in sidebar
     repo_url = st.text_input(
         'GitHub Repo URL (optional):',
         placeholder="https://github.com/username/repo",
         help="Enter a GitHub repository URL to analyze the entire codebase"
     )
-    
     if repo_url:
         st.info("🌐 Repository mode enabled")
-    
     st.markdown("---")
-    st.markdown("### 🚀 Actions")
-    
-    # Action buttons
     col1, col2 = st.columns(2)
     with col1:
         analyze_button = st.button('🔍 Analyze', type="primary", use_container_width=True)
@@ -220,9 +212,20 @@ with st.sidebar:
     with col2:
         security_button = st.button('🛡️ Security Check', use_container_width=True)
         performance_button = st.button('⚡ Performance Check', use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# Main content area for analysis output
-st.markdown('<div class="main-header"><h1>🤖 LLM Code Analyzer</h1><h3>AI-powered code analysis with RAG</h3></div>', unsafe_allow_html=True)
+# API key status (show below model selector if desired, or in main area)
+api_keys = {
+    "OpenAI": os.getenv('OPENAI_API_KEY'),
+    "Anthropic": os.getenv('ANTHROPIC_API_KEY'),
+    "DeepSeek": os.getenv('DEEPSEEK_API_KEY'),
+    "Mercury": os.getenv('MERCURY_API_KEY'),
+    "Gemini": os.getenv('GEMINI_API_KEY')
+}
+if not api_keys[model]:
+    st.error(f"❌ {model} API key missing")
+else:
+    st.success(f"✅ {model} API key found")
 
 # Analysis logic
 if analyze_button or fix_button or security_button or performance_button:
