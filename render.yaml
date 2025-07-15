@@ -4,7 +4,7 @@ services:
     env: python
     pythonVersion: "3.11"
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    startCommand: streamlit run code_analyzer/web/app.py --server.port $PORT --server.address 0.0.0.0
     envVars:
       - key: OPENAI_API_KEY
         sync: false
