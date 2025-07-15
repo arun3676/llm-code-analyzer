@@ -137,7 +137,7 @@ class RAGCodeAssistant:
         
         print("RAG Code Assistant initialized successfully!")
 
-    def _get_llm_client(self, model: str = None):
+    def model_switcher(self, model: str = None):
         """Get LLM client for the specified model."""
         if model is None:
             model = self.default_model
@@ -185,7 +185,7 @@ class RAGCodeAssistant:
         """
         try:
             # Get LLM client
-            llm = self._get_llm_client(model)
+            llm = self.model_switcher(model)
             if not llm:
                 return {
                     'error': f"No LLM client available for model: {model}",
