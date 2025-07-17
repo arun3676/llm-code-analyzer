@@ -23,7 +23,7 @@ scipy
 numpy
 streamlit-option-menu
 # Added for mercury
-mercury-sdk
+mercury-sdk==0.1.0
 requests
 websockets
 # Added for dashboard
