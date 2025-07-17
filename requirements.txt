@@ -1,5 +1,10 @@
 streamlit==1.36.0
-langchain==0.2.7
+langchain==0.1.16
+langchain-core==0.1.53
+langchain-openai==0.0.5
+langchain-anthropic==0.1.6
+langchain-community==0.0.32
+langchain-google-genai==0.0.8
 chromadb==0.5.3
 openai==1.35.10
 anthropic==0.30.0
@@ -8,6 +13,20 @@ python-dotenv==1.0.1
 gitpython==3.1.43
 pillow==10.4.0
 blinker==1.8.2
-sentence-transformers==3.0.1
-huggingface-hub
-langchain-google-genai
+sentence-transformers
+tiktoken==0.5.2
+protobuf==4.25.3
+torch
+transformers
+scikit-learn
+scipy
+numpy
+streamlit-option-menu
+# Added for mercury
+mercury-sdk
+requests
+websockets
+# Added for dashboard
+pandas
+plotly
+matplotlib

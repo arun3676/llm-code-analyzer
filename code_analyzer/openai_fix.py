@@ -29,7 +29,7 @@ def initialize_openai_client():
     Initialize the OpenAI client directly, bypassing proxy issues.
     
     Returns:
-        ChatOpenAI: Initialized OpenAI chat model or None if initialization fails
+        OpenAIWrapper: Initialized OpenAI wrapper or None if initialization fails
     """
     try:
         # Get API key
@@ -39,7 +39,6 @@ def initialize_openai_client():
             return None
             
         # Create client without proxy settings
-        # First try with direct client initialization
         client = openai.OpenAI(api_key=api_key)
         
         # Test if client works
@@ -50,14 +49,24 @@ def initialize_openai_client():
         )
         print(f"OpenAI test successful: {test_response.choices[0].message.content}")
         
-        # Now create the LangChain ChatOpenAI wrapper with minimal parameters
-        chat_model = ChatOpenAI(
-            openai_api_key=api_key,
-            model_name="gpt-3.5-turbo",
-            temperature=0.1
-        )
+        # Create wrapper to match langchain interface
+        class OpenAIWrapper:
+            def __init__(self, client):
+                self.client = client
+            def invoke(self, messages):
+                if isinstance(messages, str):
+                    content = messages
+                else:
+                    content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                
+                response = self.client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": content}],
+                    temperature=0.1
+                )
+                return type('Response', (), {'content': response.choices[0].message.content})()
         
-        return chat_model
+        return OpenAIWrapper(client)
     except Exception as e:
         print(f"Error initializing OpenAI client: {e}")
         return None

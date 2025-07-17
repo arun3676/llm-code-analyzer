@@ -15,23 +15,10 @@ load_dotenv()
 # Import with error handling
 try:
     from langchain.prompts import PromptTemplate
-    
-    # Try to import Anthropic integration
-    try:
-        from langchain_anthropic import ChatAnthropic
-        ANTHROPIC_AVAILABLE = True
-    except ImportError:
-        logging.warning('langchain_anthropic missing - fallback to basic mode')
-        try:
-            from langchain.chat_models import ChatAnthropic
-            ANTHROPIC_AVAILABLE = True
-        except ImportError:
-            logging.warning('langchain.chat_models missing - fallback to basic mode')
-            ANTHROPIC_AVAILABLE = False
-            
+    ANTHROPIC_AVAILABLE = True  # We'll use direct Anthropic client
 except ImportError as e:
     logging.warning(f'langchain missing - fallback to basic mode: {e}')
-    raise
+    ANTHROPIC_AVAILABLE = False
 
 import json
 
@@ -40,14 +27,6 @@ from .config import DEFAULT_CONFIG
 from .prompts import CODE_ANALYSIS_PROMPT, DOCUMENTATION_PROMPT
 from .utils import timer_decorator, parse_llm_response
 from .evaluator import ModelEvaluator
-
-# Import RAG features with error handling
-try:
-    from .rag_assistant import RAGCodeAssistant
-    RAG_AVAILABLE = True
-except ImportError:
-    logging.warning('rag_assistant missing - fallback to basic mode')
-    RAG_AVAILABLE = False
 
 # Import fix suggestion generator
 try:
@@ -91,40 +70,54 @@ except ImportError:
 class DeepSeekWrapper:
     def __init__(self, api_key, model_name="deepseek-chat", temperature=0.1):
         from openai import OpenAI
-        self.client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        self.client = OpenAI(
+            api_key=api_key, 
+            base_url="https://api.deepseek.com"
+        )
         self.model_name = model_name
         self.temperature = temperature
     def invoke(self, prompt):
-        response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=self.temperature,
-            stream=False
-        )
-        class SimpleResponse:
-            def __init__(self, content):
-                self.content = content
-        return SimpleResponse(response.choices[0].message.content)
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=self.temperature,
+                stream=False
+            )
+            class SimpleResponse:
+                def __init__(self, content):
+                    self.content = content
+            return SimpleResponse(response.choices[0].message.content)
+        except Exception as e:
+            print(f"DeepSeek API error: {e}")
+            return type('ErrorResponse', (), {'content': f'Error: {str(e)}'})()
 
 # Mercury wrapper using OpenAI SDK
 class MercuryWrapper:
     def __init__(self, api_key, model_name="mercury-coder", temperature=0.1):
         from openai import OpenAI
-        self.client = OpenAI(api_key=api_key, base_url="https://api.inceptionlabs.ai/v1")
+        self.client = OpenAI(
+            api_key=api_key, 
+            base_url="https://api.inceptionlabs.ai/v1"
+        )
         self.model_name = model_name
         self.temperature = temperature
     def invoke(self, prompt):
-        response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=self.temperature,
-            stream=False
-        )
-        print("[MercuryWrapper] Raw response:", response)
-        class SimpleResponse:
-            def __init__(self, content):
-                self.content = content
-        return SimpleResponse(response.choices[0].message.content)
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=self.temperature,
+                stream=False
+            )
+            print("[MercuryWrapper] Raw response:", response)
+            class SimpleResponse:
+                def __init__(self, content):
+                    self.content = content
+            return SimpleResponse(response.choices[0].message.content)
+        except Exception as e:
+            print(f"Mercury API error: {e}")
+            return type('ErrorResponse', (), {'content': f'Error: {str(e)}'})()
 
 # Set default model names
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
@@ -134,12 +127,10 @@ DEFAULT_MERCURY_MODEL = "mercury"
 class CodeAnalyzer:
     """Main class for analyzing code using various LLM models with integrated RAG capabilities."""
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None, enable_rag: bool = True, mock: bool = False):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, mock: bool = False):
         """Initialize the code analyzer with configuration."""
         self.config = config or DEFAULT_CONFIG
         self.evaluator = ModelEvaluator()
-        self.enable_rag = enable_rag and RAG_AVAILABLE
-        self.mock = mock
         
         # Slim ChromaDB
         try:
@@ -230,13 +221,33 @@ class CodeAnalyzer:
                 
                 print(f"Initializing Claude model: {claude_model_name} with temperature {claude_temp}")
                 
-                # Use ChatAnthropic instead of Anthropic
-                self.models["claude"] = ChatAnthropic(
-                    model=claude_model_name,
-                    temperature=claude_temp,
-                    anthropic_api_key=anthropic_api_key
-                )
-                print("Successfully initialized Claude model")
+                # Use direct Anthropic client to avoid proxy issues
+                try:
+                    import anthropic
+                    anthropic_client = anthropic.Anthropic(api_key=anthropic_api_key)
+                    class AnthropicWrapper:
+                        def __init__(self, client, model_name, temperature):
+                            self.client = client
+                            self.model_name = model_name
+                            self.temperature = temperature
+                        def invoke(self, prompt):
+                            try:
+                                response = self.client.messages.create(
+                                    model=self.model_name,
+                                    max_tokens=2000,
+                                    messages=[{"role": "user", "content": prompt}]
+                                )
+                                class SimpleResponse:
+                                    def __init__(self, content):
+                                        self.content = content
+                                return SimpleResponse(response.content[0].text)
+                            except Exception as e:
+                                print(f"Anthropic API error: {e}")
+                                return type('ErrorResponse', (), {'content': f'Error: {str(e)}'})()
+                    self.models["claude"] = AnthropicWrapper(anthropic_client, claude_model_name, claude_temp)
+                    print("Successfully initialized Claude model")
+                except ImportError:
+                    print("Anthropic library not available, skipping Claude initialization")
             except Exception as e:
                 print(f"Error initializing Claude model: {e}")
                 traceback.print_exc()
@@ -261,23 +272,6 @@ class CodeAnalyzer:
                     del self.models["mercury"]
             except Exception as e:
                 print(f"Error initializing Mercury model: {e}")
-                traceback.print_exc()
-        
-        # Initialize RAG assistant
-        self.rag_assistant = None
-        if self.enable_rag:
-            try:
-                print("Initializing RAG Code Assistant...")
-                # Use current directory as codebase path
-                codebase_path = os.getcwd()
-                self.rag_assistant = RAGCodeAssistant(codebase_path=codebase_path)
-                
-                # Index the codebase
-                print("Indexing codebase...")
-                self.rag_assistant.index_codebase()
-                print("RAG Code Assistant initialized successfully!")
-            except Exception as e:
-                print(f"Error initializing RAG assistant: {e}")
                 traceback.print_exc()
         
         # Initialize fix suggestion generator
@@ -311,14 +305,13 @@ class CodeAnalyzer:
         print(f"Available models: {list(self.models.keys())}")
 
     @timer_decorator
-    def analyze_code(self, code: str, model: str = "deepseek", include_rag_suggestions: bool = True, file_path: Optional[str] = None, language: Optional[str] = None, mode: str = "quick") -> CodeAnalysisResult:
+    def analyze_code(self, code: str, model: str = "deepseek", file_path: Optional[str] = None, language: Optional[str] = None, mode: str = "quick") -> CodeAnalysisResult:
         """
         Analyze code using specified LLM model with optional RAG suggestions and quick/thorough mode.
         
         Args:
             code: Source code to analyze
             model: Model to use ('deepseek' or 'claude')
-            include_rag_suggestions: Whether to include RAG-based suggestions
             file_path: Path to the file containing the code
             language: Optional language of the code
             mode: Analysis mode ('quick' or 'thorough')
@@ -378,13 +371,11 @@ class CodeAnalyzer:
                     analysis_prompt = f"{lang_context}Analyze the following code and return up to 2 bugs and 2 suggestions, in valid JSON. Be concise.\nCode:\n{code}"
                     doc_prompt = f"{lang_context}Summarize what this code does in 2-3 sentences."
                 max_tokens = 600
-                do_rag = False
                 do_fixes = False
             else:
                 analysis_prompt = f"{lang_context}" + self.prompts['analysis'].format(code=code)
                 doc_prompt = f"{lang_context}" + self.prompts['documentation'].format(code=code)
                 max_tokens = 2000
-                do_rag = include_rag_suggestions
                 do_fixes = True
             
             # Retry logic for LLM calls
@@ -459,79 +450,6 @@ class CodeAnalyzer:
                 if not doc_result or doc_result.strip() == "":
                     doc_result = "No documentation generated."
             
-            # RAG and fix suggestions only in thorough mode
-            rag_suggestions = []
-            if do_rag and hasattr(self, 'rag_assistant') and self.rag_assistant:
-                try:
-                    rag_suggestions = self.rag_assistant.get_code_suggestions(
-                        code, detected_language, "Looking for similar patterns and improvements"
-                    )
-                    rag_count = 0
-                    for suggestion in rag_suggestions:
-                        if rag_count >= 3:
-                            break
-                        explanation = suggestion.get('explanation', '')
-                        if explanation:
-                            short_expl = explanation.split('This code snippet')[0].strip()
-                            if len(short_expl) > 180:
-                                short_expl = short_expl[:180] + '...'
-                            parsed_result["improvement_suggestions"].append(f"RAG: {short_expl}")
-                            rag_count += 1
-                except Exception as e:
-                    logging.warning(f'RAG suggestions failed: {e}')
-            
-            # Run specialized analyzers
-            framework_analysis = None
-            cloud_analysis = None
-            container_analysis = None
-            
-            if hasattr(self, 'framework_analyzer') and self.framework_analyzer and file_path:
-                try:
-                    framework_analysis = self.framework_analyzer.analyze_code(file_path, code)
-                except Exception as e:
-                    logging.warning(f"Framework analysis error: {e}")
-            
-            if hasattr(self, 'cloud_analyzer') and self.cloud_analyzer and file_path:
-                try:
-                    cloud_analysis = self.cloud_analyzer.analyze_code(file_path, code)
-                except Exception as e:
-                    logging.warning(f"Cloud analysis error: {e}")
-            
-            if hasattr(self, 'container_analyzer') and self.container_analyzer and file_path:
-                try:
-                    container_analysis = self.container_analyzer.analyze_code(file_path, code)
-                except Exception as e:
-                    logging.warning(f"Container analysis error: {e}")
-            
-            # Add specialized analysis results to suggestions
-            if framework_analysis and framework_analysis.get('issues'):
-                for issue in framework_analysis['issues']:
-                    parsed_result["improvement_suggestions"].append(
-                        f"Framework ({framework_analysis['framework']}): {issue['message']}"
-                    )
-            
-            if cloud_analysis and cloud_analysis.get('issues'):
-                for issue in cloud_analysis['issues']:
-                    parsed_result["improvement_suggestions"].append(
-                        f"Cloud ({cloud_analysis['platform']}): {issue['message']}"
-                    )
-            
-            if container_analysis and container_analysis.get('issues'):
-                for issue in container_analysis['issues']:
-                    parsed_result["improvement_suggestions"].append(
-                        f"Container ({container_analysis['config_type']}): {issue['message']}"
-                    )
-            
-            # Create result object
-            result_obj = CodeAnalysisResult(
-                code_quality_score=parsed_result.get("code_quality_score", 50),
-                potential_bugs=parsed_result.get("potential_bugs", []),
-                improvement_suggestions=parsed_result.get("improvement_suggestions", []),
-                documentation=doc_result,
-                model_name=model,
-                execution_time=time.time()  # This will be set by the timer decorator
-            )
-            
             # Fix suggestions only in thorough mode
             if do_fixes and hasattr(self, 'fix_generator') and self.fix_generator:
                 try:
@@ -577,68 +495,6 @@ class CodeAnalyzer:
                 execution_time=0,
                 fix_suggestions=[]
             )
-
-    def search_similar_code(self, query: str, top_k: int = 5, language_filter: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Search for similar code in the codebase using RAG.
-        
-        Args:
-            query: Search query
-            top_k: Number of results to return
-            language_filter: Optional language filter
-            
-        Returns:
-            List of search results
-        """
-        if not self.rag_assistant:
-            return []
-        
-        try:
-            results = self.rag_assistant.search_code(query, top_k, language_filter)
-            return [{
-                'snippet': {
-                    'content': result.snippet.content,
-                    'file_path': result.snippet.file_path,
-                    'language': result.snippet.language,
-                    'function_name': result.snippet.function_name,
-                    'class_name': result.snippet.class_name
-                },
-                'relevance_score': result.relevance_score,
-                'context': result.context,
-                'explanation': result.explanation
-            } for result in results]
-        except Exception as e:
-            print(f"Error searching code: {e}")
-            return []
-    
-    def get_codebase_stats(self) -> Dict[str, Any]:
-        """Get statistics about the indexed codebase."""
-        if not self.rag_assistant:
-            return {'error': 'RAG assistant not available'}
-        
-        try:
-            return self.rag_assistant.get_codebase_stats()
-        except Exception as e:
-            return {'error': f'Failed to get stats: {str(e)}'}
-    
-    def reindex_codebase(self, force_reindex: bool = True) -> int:
-        """
-        Reindex the codebase for RAG search.
-        
-        Args:
-            force_reindex: Whether to force reindexing
-            
-        Returns:
-            Number of snippets indexed
-        """
-        if not self.rag_assistant:
-            return 0
-        
-        try:
-            return self.rag_assistant.index_codebase(force_reindex=force_reindex)
-        except Exception as e:
-            print(f"Error reindexing codebase: {e}")
-            return 0
 
     def analyze_with_all_models(self, code: str, mode: str = "quick") -> Dict[str, CodeAnalysisResult]:
         """Analyze code using all available models."""

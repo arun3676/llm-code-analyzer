@@ -12,20 +12,17 @@ from pathlib import Path
 from datetime import datetime
 import logging
 
-# LangChain imports for API-based LLMs
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.schema import HumanMessage
+# LangChain imports for API-based LLMs (only for Google Gemini)
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    print("Google Gemini not available")
+
+from langchain_core.messages import HumanMessage
 
 # Import our new modules with error handling
-try:
-    from .rag_assistant import RAGCodeAssistant
-    RAG_AVAILABLE = True
-except ImportError:
-    logging.warning('rag_assistant missing - fallback to basic mode')
-    RAG_AVAILABLE = False
-
 try:
     from .security_analyzer import SecurityAnalyzer, SecurityReport
     SECURITY_AVAILABLE = True
@@ -43,12 +40,12 @@ except ImportError:
     PerformanceReport = None
 
 try:
-    from .multimodal_analyzer import MultimodalAnalyzer, MultimodalAnalysis
+    from .multimodal_analyzer import MultiModalAnalyzer
     MULTIMODAL_AVAILABLE = True
 except ImportError:
     logging.warning('multimodal_analyzer missing - fallback to basic mode')
     MULTIMODAL_AVAILABLE = False
-    MultimodalAnalysis = None
+    class MultiModalAnalyzer: pass  # Dummy class
 
 from .main import CodeAnalyzer
 from .models import CodeAnalysisResult
@@ -60,7 +57,6 @@ class AdvancedAnalysisResult:
     code_analysis: Optional[CodeAnalysisResult] = None
     
     # Advanced analyses
-    rag_suggestions: Optional[List[Dict[str, Any]]] = None
     security_report: Optional[Any] = None  # SecurityReport if available
     performance_report: Optional[Any] = None  # PerformanceReport if available
     multimodal_analysis: Optional[Any] = None  # MultimodalAnalysis if available
@@ -110,25 +106,215 @@ class AdvancedCodeAnalyzer:
     
     def _get_llm(self, model):
         """Get LLM client for the specified model."""
-        if model == 'OpenAI':
-            from langchain_openai import ChatOpenAI
-            return ChatOpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
-        elif model == 'Anthropic':
-            from langchain_anthropic import ChatAnthropic
-            return ChatAnthropic(anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'))
-        elif model == 'DeepSeek':
-            from langchain_openai import ChatOpenAI
-            return ChatOpenAI(base_url='https://api.deepseek.com/v1', api_key=os.getenv('DEEPSEEK_API_KEY'))
-        elif model == 'Mercury':
-            from langchain_openai import ChatOpenAI
-            return ChatOpenAI(base_url='https://api.mercury.com/v1', api_key=os.getenv('MERCURY_API_KEY'))
-        elif model == 'Gemini':
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            return ChatGoogleGenerativeAI(google_api_key=os.getenv('GEMINI_API_KEY'))
-        else:
-            # Default to OpenAI
-            from langchain_openai import ChatOpenAI
-            return ChatOpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
+        try:
+            if model == 'OpenAI':
+                # Use direct OpenAI client to avoid proxy issues
+                from openai import OpenAI
+                client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                # Create wrapper to match langchain interface
+                class OpenAIWrapper:
+                    def __init__(self, client):
+                        self.client = client
+                    def invoke(self, messages):
+                        if isinstance(messages, str):
+                            content = messages
+                        else:
+                            content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                        
+                        response = self.client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": content}],
+                            temperature=0.1
+                        )
+                        return type('Response', (), {'content': response.choices[0].message.content})()
+                
+                return OpenAIWrapper(client)
+            elif model == 'Anthropic':
+                # Use direct Anthropic client to avoid proxy issues
+                try:
+                    import anthropic
+                    client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+                    # Create wrapper to match langchain interface
+                    class AnthropicWrapper:
+                        def __init__(self, client):
+                            self.client = client
+                        def invoke(self, messages):
+                            if isinstance(messages, str):
+                                content = messages
+                            else:
+                                content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                            
+                            response = self.client.messages.create(
+                                model="claude-3-haiku-20240307",
+                                max_tokens=2000,
+                                messages=[{"role": "user", "content": content}]
+                            )
+                            return type('Response', (), {'content': response.content[0].text})()
+                    
+                    return AnthropicWrapper(client)
+                except ImportError:
+                    print("Anthropic library not available, falling back to OpenAI")
+                    # Fallback to OpenAI
+                    from openai import OpenAI
+                    client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                    class OpenAIWrapper:
+                        def __init__(self, client):
+                            self.client = client
+                        def invoke(self, messages):
+                            if isinstance(messages, str):
+                                content = messages
+                            else:
+                                content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                            
+                            response = self.client.chat.completions.create(
+                                model="gpt-3.5-turbo",
+                                messages=[{"role": "user", "content": content}],
+                                temperature=0.1
+                            )
+                            return type('Response', (), {'content': response.choices[0].message.content})()
+                    
+                    return OpenAIWrapper(client)
+            elif model == 'DeepSeek':
+                # Use direct OpenAI client for DeepSeek
+                from openai import OpenAI
+                client = OpenAI(
+                    api_key=os.getenv('DEEPSEEK_API_KEY'),
+                    base_url="https://api.deepseek.com/v1"
+                )
+                # Create a wrapper to match langchain interface
+                class DeepSeekWrapper:
+                    def __init__(self, client):
+                        self.client = client
+                    def invoke(self, messages):
+                        if isinstance(messages, str):
+                            content = messages
+                        else:
+                            content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                        
+                        response = self.client.chat.completions.create(
+                            model="deepseek-chat",
+                            messages=[{"role": "user", "content": content}],
+                            temperature=0.1
+                        )
+                        return type('Response', (), {'content': response.choices[0].message.content})()
+                
+                return DeepSeekWrapper(client)
+            elif model == 'Mercury':
+                # Use direct OpenAI client for Mercury
+                from openai import OpenAI
+                client = OpenAI(
+                    api_key=os.getenv('MERCURY_API_KEY'),
+                    base_url="https://api.inceptionlabs.ai/v1"
+                )
+                # Create a wrapper to match langchain interface
+                class MercuryWrapper:
+                    def __init__(self, client):
+                        self.client = client
+                    def invoke(self, messages):
+                        if isinstance(messages, str):
+                            content = messages
+                        else:
+                            content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                        
+                        response = self.client.chat.completions.create(
+                            model="mercury-coder",
+                            messages=[{"role": "user", "content": content}],
+                            temperature=0.1
+                        )
+                        return type('Response', (), {'content': response.choices[0].message.content})()
+                
+                return MercuryWrapper(client)
+            elif model == 'Gemini':
+                if GEMINI_AVAILABLE:
+                    try:
+                        return ChatGoogleGenerativeAI(google_api_key=os.getenv('GEMINI_API_KEY'))
+                    except Exception as e:
+                        print(f"Failed to initialize Gemini: {e}, falling back to OpenAI")
+                        # Fallback to OpenAI
+                        from openai import OpenAI
+                        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                        class OpenAIWrapper:
+                            def __init__(self, client):
+                                self.client = client
+                            def invoke(self, messages):
+                                if isinstance(messages, str):
+                                    content = messages
+                                else:
+                                    content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                                
+                                response = self.client.chat.completions.create(
+                                    model="gpt-3.5-turbo",
+                                    messages=[{"role": "user", "content": content}],
+                                    temperature=0.1
+                                )
+                                return type('Response', (), {'content': response.choices[0].message.content})()
+                        
+                        return OpenAIWrapper(client)
+                else:
+                    print("Gemini not available, falling back to OpenAI")
+                    # Fallback to OpenAI
+                    from openai import OpenAI
+                    client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                    class OpenAIWrapper:
+                        def __init__(self, client):
+                            self.client = client
+                        def invoke(self, messages):
+                            if isinstance(messages, str):
+                                content = messages
+                            else:
+                                content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                            
+                            response = self.client.chat.completions.create(
+                                model="gpt-3.5-turbo",
+                                messages=[{"role": "user", "content": content}],
+                                temperature=0.1
+                            )
+                            return type('Response', (), {'content': response.choices[0].message.content})()
+                    
+                    return OpenAIWrapper(client)
+            else:
+                # Default to OpenAI
+                from openai import OpenAI
+                client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                class OpenAIWrapper:
+                    def __init__(self, client):
+                        self.client = client
+                    def invoke(self, messages):
+                        if isinstance(messages, str):
+                            content = messages
+                        else:
+                            content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                        
+                        response = self.client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": content}],
+                            temperature=0.1
+                        )
+                        return type('Response', (), {'content': response.choices[0].message.content})()
+                
+                return OpenAIWrapper(client)
+        except Exception as e:
+            print(f"Error initializing {model} model: {e}")
+            # Fallback to OpenAI
+            from openai import OpenAI
+            client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+            class OpenAIWrapper:
+                def __init__(self, client):
+                    self.client = client
+                def invoke(self, messages):
+                    if isinstance(messages, str):
+                        content = messages
+                    else:
+                        content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                    
+                    response = self.client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": content}],
+                        temperature=0.1
+                    )
+                    return type('Response', (), {'content': response.choices[0].message.content})()
+            
+            return OpenAIWrapper(client)
     
     def analyze_code(self, code):
         """Simple code analysis method."""
@@ -137,39 +323,203 @@ class AdvancedCodeAnalyzer:
     def _initialize_llm_clients(self):
         """Initialize LLM clients for different API providers."""
         try:
-            # OpenAI
+            # OpenAI - use direct OpenAI client to avoid proxy issues
             if os.getenv('OPENAI_API_KEY'):
-                openai_llm = ChatOpenAI(openai_api_key=os.getenv('OPENAI_API_KEY'))
-                self.llm_clients['openai'] = openai_llm
+                from openai import OpenAI
+                openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                # Create wrapper to match langchain interface
+                class OpenAIWrapper:
+                    def __init__(self, client):
+                        self.client = client
+                    def invoke(self, messages):
+                        if isinstance(messages, str):
+                            content = messages
+                        else:
+                            content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                        
+                        response = self.client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[{"role": "user", "content": content}],
+                            temperature=0.1
+                        )
+                        return type('Response', (), {'content': response.choices[0].message.content})()
+                
+                self.llm_clients['openai'] = OpenAIWrapper(openai_client)
             
-            # Anthropic Claude
+            # Anthropic Claude - use direct Anthropic client to avoid proxy issues
             if os.getenv('ANTHROPIC_API_KEY'):
-                anthropic_llm = ChatAnthropic(anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'))
-                self.llm_clients['claude'] = anthropic_llm
+                try:
+                    import anthropic
+                    anthropic_client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+                    # Create wrapper to match langchain interface
+                    class AnthropicWrapper:
+                        def __init__(self, client):
+                            self.client = client
+                        def invoke(self, messages):
+                            if isinstance(messages, str):
+                                content = messages
+                            else:
+                                content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                            
+                            response = self.client.messages.create(
+                                model="claude-3-haiku-20240307",
+                                max_tokens=2000,
+                                messages=[{"role": "user", "content": content}]
+                            )
+                            return type('Response', (), {'content': response.content[0].text})()
+                    
+                    self.llm_clients['claude'] = AnthropicWrapper(anthropic_client)
+                except ImportError:
+                    print("Anthropic library not available, skipping Claude initialization")
             
             # Google Gemini
-            if os.getenv('GEMINI_API_KEY'):
-                gemini_llm = ChatGoogleGenerativeAI(google_api_key=os.getenv('GEMINI_API_KEY'))
-                self.llm_clients['gemini'] = gemini_llm
+            if os.getenv('GEMINI_API_KEY') and GEMINI_AVAILABLE:
+                try:
+                    gemini_llm = ChatGoogleGenerativeAI(google_api_key=os.getenv('GEMINI_API_KEY'))
+                    self.llm_clients['gemini'] = gemini_llm
+                except Exception as e:
+                    print(f"Failed to initialize Gemini: {e}")
+            elif os.getenv('GEMINI_API_KEY') and not GEMINI_AVAILABLE:
+                print("Gemini API key found but library not available, skipping Gemini initialization")
             
-            # DeepSeek (using OpenAI-compatible API)
+            # DeepSeek (using direct OpenAI client)
             if os.getenv('DEEPSEEK_API_KEY'):
-                deepseek = ChatOpenAI(
-                    base_url='https://api.deepseek.com/v1',
-                    api_key=os.getenv('DEEPSEEK_API_KEY')
+                from openai import OpenAI
+                deepseek_client = OpenAI(
+                    api_key=os.getenv('DEEPSEEK_API_KEY'),
+                    base_url="https://api.deepseek.com/v1"
                 )
-                self.llm_clients['deepseek'] = deepseek
+                # Create wrapper
+                class DeepSeekWrapper:
+                    def __init__(self, client):
+                        self.client = client
+                    def invoke(self, messages):
+                        if isinstance(messages, str):
+                            content = messages
+                        else:
+                            content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                        
+                        response = self.client.chat.completions.create(
+                            model="deepseek-chat",
+                            messages=[{"role": "user", "content": content}],
+                            temperature=0.1
+                        )
+                        return type('Response', (), {'content': response.choices[0].message.content})()
+                
+                self.llm_clients['deepseek'] = DeepSeekWrapper(deepseek_client)
             
-            # Mercury (using OpenAI-compatible API)
+            # Mercury (using direct OpenAI client)
             if os.getenv('MERCURY_API_KEY'):
-                mercury = ChatOpenAI(
-                    base_url='https://api.mercury.com/v1',
-                    api_key=os.getenv('MERCURY_API_KEY')
+                from openai import OpenAI
+                mercury_client = OpenAI(
+                    api_key=os.getenv('MERCURY_API_KEY'),
+                    base_url="https://api.inceptionlabs.ai/v1"
                 )
-                self.llm_clients['mercury'] = mercury
+                # Create wrapper
+                class MercuryWrapper:
+                    def __init__(self, client):
+                        self.client = client
+                    def invoke(self, messages):
+                        if isinstance(messages, str):
+                            content = messages
+                        else:
+                            content = messages[0].content if hasattr(messages[0], 'content') else str(messages[0])
+                        
+                        response = self.client.chat.completions.create(
+                            model="mercury-coder",
+                            messages=[{"role": "user", "content": content}],
+                            temperature=0.1
+                        )
+                        return type('Response', (), {'content': response.choices[0].message.content})()
+                
+                self.llm_clients['mercury'] = MercuryWrapper(mercury_client)
                 
         except Exception as e:
             logging.error(f"Failed to initialize LLM clients: {e}")
+            print(f"Error initializing LLM clients: {e}")
+    
+    def _initialize_advanced_features(self):
+        """Initializes all advanced feature analyzers."""
+        if self.config.enable_multimodal and MULTIMODAL_AVAILABLE:
+            try:
+                self.multimodal_analyzer = MultiModalAnalyzer()
+                print("✅ MultimodalAnalyzer initialized successfully.")
+            except Exception as e:
+                print(f"❌ Failed to initialize MultimodalAnalyzer: {e}")
+                self.multimodal_analyzer = None
+        else:
+            self.multimodal_analyzer = None
+            if self.config.enable_multimodal:
+                print("⚠️ Multimodal analysis enabled in config, but module is not available.")
+    
+    def analyze_image(self, image_file, prompt: str, model: str = 'gemini-vision') -> Dict[str, Any]:
+        """
+        Analyze an image using the multimodal analyzer.
+        """
+        if not self.multimodal_analyzer:
+            return {'error': 'Multimodal analyzer is not available.'}
+        
+        try:
+            return self.multimodal_analyzer.analyze_image(image_file, prompt, model)
+        except Exception as e:
+            logging.error(f"Error during image analysis: {e}")
+            return {'error': f'An unexpected error occurred: {str(e)}'}
+
+    def analyze_image_all(self, image_file, prompt: str) -> Dict[str, Any]:
+        """
+        Analyze an image using all available multimodal models.
+        """
+        if not self.multimodal_analyzer:
+            return {'error': 'Multimodal analyzer is not available.'}
+            
+        try:
+            return self.multimodal_analyzer.analyze_with_all_models(image_file, prompt)
+        except Exception as e:
+            logging.error(f"Error during 'analyze all' image analysis: {e}")
+            return {'error': f'An unexpected error occurred: {str(e)}'}
+
+    def get_available_multimodal_models(self) -> List[str]:
+        """Get a list of available multimodal models."""
+        if self.multimodal_analyzer:
+            return self.multimodal_analyzer.get_available_models()
+        return []
+    
+    def chat_with_code(self, code: str, chat_history: List[Dict[str, str]], user_question: str) -> str:
+        """
+        Engage in a conversation about the provided code.
+        
+        Args:
+            code: The source code being discussed.
+            chat_history: A list of previous user/assistant messages.
+            user_question: The user's current question.
+            
+        Returns:
+            The model's response to the user's question.
+        """
+        llm_client = self.model_switcher(self.model)
+        if not llm_client:
+            return "The requested model is not available at the moment."
+
+        # Construct a detailed prompt with context
+        prompt = f"""You are an expert code assistant. A user wants to discuss the following code snippet:
+
+```python
+{code}
+```
+
+Here is the conversation history so far:
+"""
+        for message in chat_history:
+            prompt += f"\n**{message['role'].capitalize()}:** {message['content']}"
+
+        prompt += f"\n\n**User's new question:** {user_question}\n\n**Your task:** Based on the code and the conversation, provide a clear and helpful answer to the user's question."
+
+        try:
+            response = llm_client.invoke([HumanMessage(content=prompt)])
+            return response.content if hasattr(response, 'content') else str(response)
+        except Exception as e:
+            logging.error(f"Chat with code failed: {e}")
+            return f"Sorry, an error occurred while processing your request: {str(e)}"
     
     def model_switcher(self, model: str):
         """Get LLM client for the specified model."""
@@ -263,55 +613,16 @@ class AdvancedCodeAnalyzer:
                 'timestamp': datetime.now().isoformat()
             }
     
-    def _initialize_advanced_features(self):
-        """Initialize advanced analysis features based on configuration."""
-        try:
-            # Initialize RAG assistant
-            if self.config.enable_rag and self.config.codebase_path and RAG_AVAILABLE:
-                print("Initializing RAG Code Assistant...")
-                self.rag_assistant = RAGCodeAssistant(
-                    codebase_path=self.config.codebase_path
-                )
-                # Index the codebase
-                try:
-                    snippet_count = self.rag_assistant.index_codebase()
-                    print(f"RAG assistant initialized with {snippet_count} code snippets")
-                except Exception as e:
-                    print(f"Warning: RAG indexing failed: {e}")
-                    self.rag_assistant = None
-            
-            # Initialize security analyzer
-            if self.config.enable_security and SECURITY_AVAILABLE:
-                print("Initializing Security Analyzer...")
-                self.security_analyzer = SecurityAnalyzer()
-            
-            # Initialize performance analyzer
-            if self.config.enable_performance and PERFORMANCE_AVAILABLE:
-                print("Initializing Performance Analyzer...")
-                self.performance_analyzer = PerformanceAnalyzer()
-            
-            # Initialize multimodal analyzer
-            if self.config.enable_multimodal and self.config.openai_api_key and MULTIMODAL_AVAILABLE:
-                print("Initializing Multimodal Analyzer...")
-                self.multimodal_analyzer = MultimodalAnalyzer(
-                    openai_api_key=self.config.openai_api_key
-                )
-        
-        except Exception as e:
-            print(f"Warning: Some advanced features failed to initialize: {e}")
-    
     def analyze_code_advanced(self, 
                             code: str, 
                             language: str = 'python',
-                            file_path: str = '',
-                            model: str = 'deepseek') -> AdvancedAnalysisResult:
+                            model: str = 'deepseek') -> Dict:
         """
         Perform comprehensive code analysis using API-based LLMs.
         
         Args:
             code: Source code to analyze
             language: Programming language
-            file_path: Path to the file being analyzed
             model: LLM model to use for analysis
             
         Returns:
@@ -339,169 +650,31 @@ class AdvancedCodeAnalyzer:
         except Exception as e:
             print(f"Basic analysis failed: {e}")
         
-        # RAG analysis
-        rag_suggestions = None
-        if self.rag_assistant:
-            try:
-                rag_suggestions = self.rag_assistant.get_code_suggestions(
-                    code, language, "Looking for similar patterns and improvements"
-                )
-                features_used.append('rag_analysis')
-            except Exception as e:
-                print(f"RAG analysis failed: {e}")
-        
         # Security analysis using API-based LLM
         security_report = None
-        if self.config.enable_security:
-            try:
-                security_result = self._analyze_with_llm(code, language, model, "security")
-                if 'error' not in security_result:
-                    security_report = {
-                        'analysis': security_result['analysis'],
-                        'model_used': model,
-                        'timestamp': security_result['timestamp']
-                    }
-                    features_used.append('security_analysis')
-            except Exception as e:
-                print(f"Security analysis failed: {e}")
+        # Removed security analyzer initialization and usage
         
         # Performance analysis using API-based LLM
         performance_report = None
-        if self.config.enable_performance:
-            try:
-                performance_result = self._analyze_with_llm(code, language, model, "performance")
-                if 'error' not in performance_result:
-                    performance_report = {
-                        'analysis': performance_result['analysis'],
-                        'model_used': model,
-                        'timestamp': performance_result['timestamp']
-                    }
-                    features_used.append('performance_analysis')
-            except Exception as e:
-                print(f"Performance analysis failed: {e}")
+        # Removed performance analyzer initialization and usage
         
-        analysis_duration = time.time() - start_time
-        
-        return AdvancedAnalysisResult(
-            code_analysis=code_analysis,
-            rag_suggestions=rag_suggestions,
-            security_report=security_report,
-            performance_report=performance_report,
-            multimodal_analysis=None,  # Not applicable for text code
-            analysis_timestamp=datetime.now().isoformat(),
-            analysis_duration=analysis_duration,
-            features_used=features_used
-        )
-    
-    def analyze_image(self, image_path: str, analysis_type: str = 'auto') -> AdvancedAnalysisResult:
-        """
-        Analyze an image (screenshot, UI mockup, diagram) using multimodal capabilities.
-        
-        Args:
-            image_path: Path to the image file
-            analysis_type: Type of analysis ('auto', 'code', 'ui', 'diagram')
-            
-        Returns:
-            AdvancedAnalysisResult with multimodal analysis
-        """
-        start_time = time.time()
-        features_used = []
-        
+        # Multimodal analysis using API-based LLM
         multimodal_analysis = None
-        if self.multimodal_analyzer:
-            try:
-                multimodal_analysis = self.multimodal_analyzer.analyze_image(
-                    image_path, analysis_type
-                )
-                features_used.append('multimodal_analysis')
-                
-                # If code was extracted, perform additional analysis
-                if multimodal_analysis.code_extraction:
-                    # Perform security analysis on extracted code
-                    if self.security_analyzer:
-                        try:
-                            security_report = self.security_analyzer.analyze_code_security(
-                                multimodal_analysis.code_extraction, 
-                                'python',  # Assume Python for extracted code
-                                image_path
-                            )
-                            features_used.append('security_analysis')
-                        except Exception as e:
-                            print(f"Security analysis on extracted code failed: {e}")
-                    
-                    # Perform performance analysis on extracted code
-                    if self.performance_analyzer:
-                        try:
-                            performance_report = self.performance_analyzer.analyze_code_performance(
-                                multimodal_analysis.code_extraction,
-                                'python',
-                                image_path
-                            )
-                            features_used.append('performance_analysis')
-                        except Exception as e:
-                            print(f"Performance analysis on extracted code failed: {e}")
-                
-            except Exception as e:
-                print(f"Multimodal analysis failed: {e}")
+        # Removed multimodal analyzer initialization and usage
         
         analysis_duration = time.time() - start_time
         
-        return AdvancedAnalysisResult(
-            code_analysis=None,
-            rag_suggestions=None,
-            security_report=None,
-            performance_report=None,
-            multimodal_analysis=multimodal_analysis,
-            analysis_timestamp=datetime.now().isoformat(),
-            analysis_duration=analysis_duration,
-            features_used=features_used
-        )
+        return code_analysis
     
-    def scan_codebase_security(self, codebase_path: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Perform security scan on entire codebase.
-        
-        Args:
-            codebase_path: Path to codebase (uses config path if not provided)
-            
-        Returns:
-            Dictionary mapping file paths to security reports
-        """
-        if not self.security_analyzer:
-            return {}
-        
-        scan_path = codebase_path or self.config.codebase_path
-        if not scan_path:
-            raise ValueError("No codebase path provided for security scan")
-        
-        return self.security_analyzer.scan_directory(scan_path)
+    # Removed analyze_image method
     
-    def get_codebase_stats(self) -> Dict[str, Any]:
-        """Get statistics about the indexed codebase."""
-        if not self.rag_assistant:
-            return {'error': 'RAG assistant not available'}
-        
-        return self.rag_assistant.get_codebase_stats()
+    # Removed scan_codebase_security method
     
-    def search_similar_code(self, query: str, top_k: int = 5, language_filter: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Search for similar code in the codebase.
-        
-        Args:
-            query: Search query
-            top_k: Number of results to return
-            language_filter: Optional language filter
-            
-        Returns:
-            List of search results
-        """
-        if not self.rag_assistant:
-            return []
-        
-        results = self.rag_assistant.search_code(query, top_k, language_filter)
-        return [asdict(result) for result in results]
+    # Removed get_codebase_stats method
     
-    def generate_comprehensive_report(self, analysis_result: AdvancedAnalysisResult, 
+    # Removed search_similar_code method
+    
+    def generate_comprehensive_report(self, analysis_result: Dict, 
                                     output_format: str = 'json') -> str:
         """
         Generate a comprehensive report combining all analysis results.
@@ -520,37 +693,32 @@ class AdvancedCodeAnalyzer:
         else:
             return self._generate_text_report(analysis_result)
     
-    def _generate_json_report(self, analysis_result: AdvancedAnalysisResult) -> str:
+    def _generate_json_report(self, analysis_result: Dict) -> str:
         """Generate JSON format comprehensive report."""
         report_data = {
             'analysis_metadata': {
-                'timestamp': analysis_result.analysis_timestamp,
-                'duration': analysis_result.analysis_duration,
-                'features_used': analysis_result.features_used
+                'timestamp': analysis_result['analysis_timestamp'],
+                'duration': analysis_result['analysis_duration'],
+                'features_used': analysis_result['features_used']
             },
             'basic_analysis': None,
-            'rag_analysis': None,
             'security_analysis': None,
             'performance_analysis': None,
             'multimodal_analysis': None
         }
         
         # Add basic analysis
-        if analysis_result.code_analysis:
+        if analysis_result['code_analysis']:
             report_data['basic_analysis'] = {
-                'quality_score': analysis_result.code_analysis.code_quality_score,
-                'potential_bugs': analysis_result.code_analysis.potential_bugs,
-                'improvement_suggestions': analysis_result.code_analysis.improvement_suggestions,
-                'documentation': analysis_result.code_analysis.documentation,
-                'execution_time': analysis_result.code_analysis.execution_time
+                'quality_score': analysis_result['code_analysis'].code_quality_score,
+                'potential_bugs': analysis_result['code_analysis'].potential_bugs,
+                'improvement_suggestions': analysis_result['code_analysis'].improvement_suggestions,
+                'documentation': analysis_result['code_analysis'].documentation,
+                'execution_time': analysis_result['code_analysis'].execution_time
             }
         
-        # Add RAG analysis
-        if analysis_result.rag_suggestions:
-            report_data['rag_analysis'] = analysis_result.rag_suggestions
-        
         # Add security analysis
-        if analysis_result.security_report:
+        if analysis_result['security_report']:
             report_data['security_analysis'] = {
                 'vulnerabilities': [
                     {
@@ -562,15 +730,15 @@ class AdvancedCodeAnalyzer:
                         'cwe_id': v.cwe_id,
                         'confidence': v.confidence
                     }
-                    for v in analysis_result.security_report.vulnerabilities
+                    for v in analysis_result['security_report'].vulnerabilities
                 ],
-                'summary': analysis_result.security_report.summary,
-                'risk_score': analysis_result.security_report.risk_score,
-                'recommendations': analysis_result.security_report.recommendations
+                'summary': analysis_result['security_report'].summary,
+                'risk_score': analysis_result['security_report'].risk_score,
+                'recommendations': analysis_result['security_report'].recommendations
             }
         
         # Add performance analysis
-        if analysis_result.performance_report:
+        if analysis_result['performance_report']:
             report_data['performance_analysis'] = {
                 'issues': [
                     {
@@ -582,18 +750,18 @@ class AdvancedCodeAnalyzer:
                         'impact': i.impact,
                         'suggestion': i.suggestion
                     }
-                    for i in analysis_result.performance_report.issues
+                    for i in analysis_result['performance_report'].issues
                 ],
-                'summary': analysis_result.performance_report.summary,
-                'overall_score': analysis_result.performance_report.overall_score,
-                'recommendations': analysis_result.performance_report.recommendations,
-                'complexity_analysis': analysis_result.performance_report.complexity_analysis
+                'summary': analysis_result['performance_report'].summary,
+                'overall_score': analysis_result['performance_report'].overall_score,
+                'recommendations': analysis_result['performance_report'].recommendations,
+                'complexity_analysis': analysis_result['performance_report'].complexity_analysis
             }
         
         # Add multimodal analysis
-        if analysis_result.multimodal_analysis:
+        if analysis_result['multimodal_analysis']:
             report_data['multimodal_analysis'] = {
-                'image_type': analysis_result.multimodal_analysis.image_type,
+                'image_type': analysis_result['multimodal_analysis'].image_type,
                 'detected_elements': [
                     {
                         'type': e.element_type,
@@ -601,18 +769,18 @@ class AdvancedCodeAnalyzer:
                         'content': e.content,
                         'confidence': e.confidence
                     }
-                    for e in analysis_result.multimodal_analysis.detected_elements
+                    for e in analysis_result['multimodal_analysis'].detected_elements
                 ],
-                'code_extraction': analysis_result.multimodal_analysis.code_extraction,
-                'ui_analysis': analysis_result.multimodal_analysis.ui_analysis,
-                'diagram_analysis': analysis_result.multimodal_analysis.diagram_analysis,
-                'suggestions': analysis_result.multimodal_analysis.suggestions,
-                'confidence_score': analysis_result.multimodal_analysis.confidence_score
+                'code_extraction': analysis_result['multimodal_analysis'].code_extraction,
+                'ui_analysis': analysis_result['multimodal_analysis'].ui_analysis,
+                'diagram_analysis': analysis_result['multimodal_analysis'].diagram_analysis,
+                'suggestions': analysis_result['multimodal_analysis'].suggestions,
+                'confidence_score': analysis_result['multimodal_analysis'].confidence_score
             }
         
         return json.dumps(report_data, indent=2)
     
-    def _generate_html_report(self, analysis_result: AdvancedAnalysisResult) -> str:
+    def _generate_html_report(self, analysis_result: Dict) -> str:
         """Generate HTML format comprehensive report."""
         html = """
         <!DOCTYPE html>
@@ -643,48 +811,48 @@ class AdvancedCodeAnalyzer:
                 <p><strong>Features Used:</strong> {features}</p>
             </div>
         """.format(
-            timestamp=analysis_result.analysis_timestamp,
-            duration=analysis_result.analysis_duration,
-            features=', '.join(analysis_result.features_used)
+            timestamp=analysis_result['analysis_timestamp'],
+            duration=analysis_result['analysis_duration'],
+            features=', '.join(analysis_result['features_used'])
         )
         
         # Basic Analysis Section
-        if analysis_result.code_analysis:
+        if analysis_result['code_analysis']:
             html += """
             <div class="section">
                 <h2>Basic Code Analysis</h2>
                 <div class="metric">Quality Score: {score}/100</div>
                 <div class="metric">Execution Time: {time:.2f}s</div>
             """.format(
-                score=analysis_result.code_analysis.code_quality_score,
-                time=analysis_result.code_analysis.execution_time
+                score=analysis_result['code_analysis'].code_quality_score,
+                time=analysis_result['code_analysis'].execution_time
             )
             
-            if analysis_result.code_analysis.potential_bugs:
+            if analysis_result['code_analysis'].potential_bugs:
                 html += "<h3>Potential Bugs:</h3>"
-                for bug in analysis_result.code_analysis.potential_bugs:
+                for bug in analysis_result['code_analysis'].potential_bugs:
                     html += f'<div class="issue medium">{bug}</div>'
             
-            if analysis_result.code_analysis.improvement_suggestions:
+            if analysis_result['code_analysis'].improvement_suggestions:
                 html += "<h3>Improvement Suggestions:</h3>"
-                for suggestion in analysis_result.code_analysis.improvement_suggestions:
+                for suggestion in analysis_result['code_analysis'].improvement_suggestions:
                     html += f'<div class="suggestion">{suggestion}</div>'
             
             html += "</div>"
         
         # Security Analysis Section
-        if analysis_result.security_report:
+        if analysis_result['security_report']:
             html += """
             <div class="section">
                 <h2>Security Analysis</h2>
                 <div class="metric">Risk Score: {score}/100</div>
                 <div class="metric">Vulnerabilities: {count}</div>
             """.format(
-                score=analysis_result.security_report.risk_score,
-                count=len(analysis_result.security_report.vulnerabilities)
+                score=analysis_result['security_report'].risk_score,
+                count=len(analysis_result['security_report'].vulnerabilities)
             )
             
-            for vuln in analysis_result.security_report.vulnerabilities:
+            for vuln in analysis_result['security_report'].vulnerabilities:
                 html += f"""
                 <div class="issue {vuln.severity}">
                     <h3>{vuln.vulnerability_type.title()} ({vuln.severity.upper()})</h3>
@@ -698,18 +866,18 @@ class AdvancedCodeAnalyzer:
             html += "</div>"
         
         # Performance Analysis Section
-        if analysis_result.performance_report:
+        if analysis_result['performance_report']:
             html += """
             <div class="section">
                 <h2>Performance Analysis</h2>
                 <div class="metric">Performance Score: {score}/100</div>
                 <div class="metric">Issues Found: {count}</div>
             """.format(
-                score=analysis_result.performance_report.overall_score,
-                count=len(analysis_result.performance_report.issues)
+                score=analysis_result['performance_report'].overall_score,
+                count=len(analysis_result['performance_report'].issues)
             )
             
-            for issue in analysis_result.performance_report.issues:
+            for issue in analysis_result['performance_report'].issues:
                 html += f"""
                 <div class="issue {issue.severity}">
                     <h3>{issue.issue_type.title()} ({issue.severity.upper()})</h3>
@@ -722,44 +890,25 @@ class AdvancedCodeAnalyzer:
             
             html += "</div>"
         
-        # RAG Analysis Section
-        if analysis_result.rag_suggestions:
-            html += """
-            <div class="section">
-                <h2>RAG Code Suggestions</h2>
-            """
-            
-            for suggestion in analysis_result.rag_suggestions:
-                html += f"""
-                <div class="suggestion">
-                    <h3>{suggestion.get('title', 'Code Suggestion')}</h3>
-                    <p><strong>Type:</strong> {suggestion.get('type', 'N/A')}</p>
-                    <p><strong>Explanation:</strong> {suggestion.get('explanation', 'N/A')}</p>
-                    <div class="code-snippet">{suggestion.get('code', 'N/A')}</div>
-                </div>
-                """
-            
-            html += "</div>"
-        
         # Multimodal Analysis Section
-        if analysis_result.multimodal_analysis:
+        if analysis_result['multimodal_analysis']:
             html += """
             <div class="section">
                 <h2>Multimodal Analysis</h2>
                 <div class="metric">Image Type: {type}</div>
                 <div class="metric">Confidence: {conf}%</div>
             """.format(
-                type=analysis_result.multimodal_analysis.image_type,
-                conf=int(analysis_result.multimodal_analysis.confidence_score * 100)
+                type=analysis_result['multimodal_analysis'].image_type,
+                conf=int(analysis_result['multimodal_analysis'].confidence_score * 100)
             )
             
-            if analysis_result.multimodal_analysis.code_extraction:
+            if analysis_result['multimodal_analysis'].code_extraction:
                 html += f"""
                 <h3>Extracted Code:</h3>
-                <div class="code-snippet">{analysis_result.multimodal_analysis.code_extraction}</div>
+                <div class="code-snippet">{analysis_result['multimodal_analysis'].code_extraction}</div>
                 """
             
-            for suggestion in analysis_result.multimodal_analysis.suggestions:
+            for suggestion in analysis_result['multimodal_analysis'].suggestions:
                 html += f'<div class="suggestion">{suggestion}</div>'
             
             html += "</div>"
@@ -767,86 +916,75 @@ class AdvancedCodeAnalyzer:
         html += "</body></html>"
         return html
     
-    def _generate_text_report(self, analysis_result: AdvancedAnalysisResult) -> str:
+    def _generate_text_report(self, analysis_result: Dict) -> str:
         """Generate text format comprehensive report."""
         report = "=" * 60 + "\n"
         report += "ADVANCED CODE ANALYSIS REPORT\n"
         report += "=" * 60 + "\n\n"
         
-        report += f"Generated: {analysis_result.analysis_timestamp}\n"
-        report += f"Analysis Duration: {analysis_result.analysis_duration:.2f} seconds\n"
-        report += f"Features Used: {', '.join(analysis_result.features_used)}\n\n"
+        report += f"Generated: {analysis_result['analysis_timestamp']}\n"
+        report += f"Analysis Duration: {analysis_result['analysis_duration']:.2f} seconds\n"
+        report += f"Features Used: {', '.join(analysis_result['features_used'])}\n\n"
         
         # Basic Analysis
-        if analysis_result.code_analysis:
+        if analysis_result['code_analysis']:
             report += "BASIC CODE ANALYSIS\n"
             report += "-" * 20 + "\n"
-            report += f"Quality Score: {analysis_result.code_analysis.code_quality_score}/100\n"
-            report += f"Execution Time: {analysis_result.code_analysis.execution_time:.2f}s\n\n"
+            report += f"Quality Score: {analysis_result['code_analysis'].code_quality_score}/100\n"
+            report += f"Execution Time: {analysis_result['code_analysis'].execution_time:.2f}s\n\n"
             
-            if analysis_result.code_analysis.potential_bugs:
+            if analysis_result['code_analysis'].potential_bugs:
                 report += "Potential Bugs:\n"
-                for bug in analysis_result.code_analysis.potential_bugs:
+                for bug in analysis_result['code_analysis'].potential_bugs:
                     report += f"  • {bug}\n"
                 report += "\n"
             
-            if analysis_result.code_analysis.improvement_suggestions:
+            if analysis_result['code_analysis'].improvement_suggestions:
                 report += "Improvement Suggestions:\n"
-                for suggestion in analysis_result.code_analysis.improvement_suggestions:
+                for suggestion in analysis_result['code_analysis'].improvement_suggestions:
                     report += f"  • {suggestion}\n"
                 report += "\n"
         
         # Security Analysis
-        if analysis_result.security_report:
+        if analysis_result['security_report']:
             report += "SECURITY ANALYSIS\n"
             report += "-" * 18 + "\n"
-            report += f"Risk Score: {analysis_result.security_report.risk_score}/100\n"
-            report += f"Vulnerabilities: {len(analysis_result.security_report.vulnerabilities)}\n\n"
+            report += f"Risk Score: {analysis_result['security_report'].risk_score}/100\n"
+            report += f"Vulnerabilities: {len(analysis_result['security_report'].vulnerabilities)}\n\n"
             
-            for vuln in analysis_result.security_report.vulnerabilities:
+            for vuln in analysis_result['security_report'].vulnerabilities:
                 report += f"[{vuln.severity.upper()}] {vuln.vulnerability_type}\n"
                 report += f"  Description: {vuln.description}\n"
                 report += f"  Line: {vuln.line_number}\n"
                 report += f"  Code: {vuln.code_snippet}\n\n"
         
         # Performance Analysis
-        if analysis_result.performance_report:
+        if analysis_result['performance_report']:
             report += "PERFORMANCE ANALYSIS\n"
             report += "-" * 20 + "\n"
-            report += f"Performance Score: {analysis_result.performance_report.overall_score}/100\n"
-            report += f"Issues Found: {len(analysis_result.performance_report.issues)}\n\n"
+            report += f"Performance Score: {analysis_result['performance_report'].overall_score}/100\n"
+            report += f"Issues Found: {len(analysis_result['performance_report'].issues)}\n\n"
             
-            for issue in analysis_result.performance_report.issues:
+            for issue in analysis_result['performance_report'].issues:
                 report += f"[{issue.severity.upper()}] {issue.issue_type}\n"
                 report += f"  Description: {issue.description}\n"
                 report += f"  Impact: {issue.impact}\n"
                 report += f"  Suggestion: {issue.suggestion}\n\n"
         
-        # RAG Analysis
-        if analysis_result.rag_suggestions:
-            report += "RAG CODE SUGGESTIONS\n"
-            report += "-" * 20 + "\n"
-            
-            for suggestion in analysis_result.rag_suggestions:
-                report += f"Title: {suggestion.get('title', 'N/A')}\n"
-                report += f"Type: {suggestion.get('type', 'N/A')}\n"
-                report += f"Explanation: {suggestion.get('explanation', 'N/A')}\n"
-                report += f"Code: {suggestion.get('code', 'N/A')}\n\n"
-        
         # Multimodal Analysis
-        if analysis_result.multimodal_analysis:
+        if analysis_result['multimodal_analysis']:
             report += "MULTIMODAL ANALYSIS\n"
             report += "-" * 18 + "\n"
-            report += f"Image Type: {analysis_result.multimodal_analysis.image_type}\n"
-            report += f"Confidence: {analysis_result.multimodal_analysis.confidence_score:.2f}\n\n"
+            report += f"Image Type: {analysis_result['multimodal_analysis'].image_type}\n"
+            report += f"Confidence: {analysis_result['multimodal_analysis'].confidence_score:.2f}\n\n"
             
-            if analysis_result.multimodal_analysis.code_extraction:
+            if analysis_result['multimodal_analysis'].code_extraction:
                 report += "Extracted Code:\n"
-                report += analysis_result.multimodal_analysis.code_extraction + "\n\n"
+                report += analysis_result['multimodal_analysis'].code_extraction + "\n\n"
             
-            if analysis_result.multimodal_analysis.suggestions:
+            if analysis_result['multimodal_analysis'].suggestions:
                 report += "Suggestions:\n"
-                for suggestion in analysis_result.multimodal_analysis.suggestions:
+                for suggestion in analysis_result['multimodal_analysis'].suggestions:
                     report += f"  • {suggestion}\n"
         
         return report 
