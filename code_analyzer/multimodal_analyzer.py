@@ -36,6 +36,13 @@ except ImportError:
     ANTHROPIC_AVAILABLE = False
     print("Warning: Anthropic not available. Install with: pip install anthropic")
 
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    print("Warning: Gemini not available. Install with: pip install langchain-google-genai")
+
 class MultiModalAnalyzer:
     """
     Analyzer for multi-modal content (images + text) using vision-capable LLMs.
@@ -51,6 +58,7 @@ class MultiModalAnalyzer:
         """Initialize the multi-modal analyzer with API clients."""
         self.openai_client = None
         self.anthropic_client = None
+        self.gemini_client = None
         
         # Initialize OpenAI client
         if OPENAI_AVAILABLE and os.getenv("OPENAI_API_KEY"):
@@ -68,6 +76,17 @@ class MultiModalAnalyzer:
                 print("✅ Anthropic client initialized for Claude 3.5 Sonnet")
             except Exception as e:
                 print(f"❌ Failed to initialize Anthropic client: {e}")
+
+        # Initialize Gemini client
+        if GEMINI_AVAILABLE and os.getenv("GEMINI_API_KEY"):
+            try:
+                self.gemini_client = ChatGoogleGenerativeAI(
+                    model="gemini-pro-vision", 
+                    google_api_key=os.getenv("GEMINI_API_KEY")
+                )
+                print("✅ Gemini client initialized for Gemini Pro Vision")
+            except Exception as e:
+                print(f"❌ Failed to initialize Gemini client: {e}")
     
     def _preprocess_image(self, image_file) -> bytes:
         """
@@ -116,41 +135,30 @@ class MultiModalAnalyzer:
         """
         Analyze image using Google Gemini Vision model.
         """
-        api_key = os.getenv("GEMINI_API_KEY")
-        print(f"[Gemini] GEMINI_API_KEY present: {'YES' if api_key else 'NO'}")
-        if api_key:
-            print(f"[Gemini] GEMINI_API_KEY starts with: {api_key[:5]}...{api_key[-4:]}")
-        if not api_key:
-            print("[Gemini] ERROR: GEMINI_API_KEY not found in environment variables!")
-            return {'error': 'Gemini API key not found'}
+        if not self.gemini_client:
+            return {'error': 'Gemini client not initialized'}
+
         try:
             base64_image = self._encode_image_base64(image_data)
-            url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
-            payload = {
-                "contents": [
+            message = self.gemini_client.invoke(
+                [
                     {
-                        "parts": [
-                            {"text": prompt},
-                            {"inlineData": {"mimeType": "image/jpeg", "data": base64_image}}
-                        ]
-                    }
+                        "type": "text",
+                        "text": prompt,
+                    },
+                    {"type": "image_url", "image_url": f"data:image/jpeg;base64,{base64_image}"},
                 ]
-            }
-            response = requests.post(url, json=payload, timeout=60)
-            data = response.json()
-            print("[Gemini] API response:", data)
-            if 'candidates' in data and data['candidates']:
-                analysis = data['candidates'][0]['content']['parts'][0]['text']
-            else:
-                print("[Gemini] ERROR or empty response:", data)
-                return {'error': data.get('error', 'No response from Gemini Vision')}
+            )
+            analysis = message.content
+            
             code_extracted = self._extract_code_from_analysis(analysis)
             suggestions = self._generate_suggestions_from_analysis(analysis)
+            
             return {
                 'analysis': analysis,
                 'code_extracted': code_extracted,
                 'suggestions': suggestions,
-                'model': 'Gemini Vision'
+                'model': 'Gemini Pro Vision'
             }
         except Exception as e:
             print(f"Error in Gemini Vision analysis: {e}")
