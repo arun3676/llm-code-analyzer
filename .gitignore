@@ -21,7 +21,10 @@ wheels/
 *.egg
 
 # Environment variables
+.env
 
+# Streamlit logs
+streamlit_output.log
 
 # Virtual environments
 venv/
