@@ -7,7 +7,7 @@ langchain-community==0.2.6
 langchain-google-genai==1.0.6
 chromadb==0.5.3
 openai>=1.0.0
-anthropic==0.30.0
+anthropic==0.29.0
 google-generativeai
 python-dotenv==1.0.1
 gitpython==3.1.43
@@ -28,3 +28,4 @@ websockets
 pandas
 plotly
 matplotlib
+httpcore<1.0.0
