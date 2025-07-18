@@ -68,7 +68,7 @@ except ImportError:
 
 # DeepSeek wrapper using OpenAI SDK
 class DeepSeekWrapper:
-    def __init__(self, api_key, model_name="deepseek-chat", temperature=0.1):
+    def __init__(self, api_key, model_name="deepseek-chat", temperature=0.1, **kwargs):
         from openai import OpenAI
         self.client = OpenAI(
             api_key=api_key, 
@@ -94,7 +94,7 @@ class DeepSeekWrapper:
 
 # Mercury wrapper using OpenAI SDK
 class MercuryWrapper:
-    def __init__(self, api_key, model_name="mercury-coder", temperature=0.1):
+    def __init__(self, api_key, model_name="mercury-coder", temperature=0.1, **kwargs):
         from openai import OpenAI
         self.client = OpenAI(
             api_key=api_key, 
@@ -226,7 +226,7 @@ class CodeAnalyzer:
                     import anthropic
                     anthropic_client = anthropic.Anthropic(api_key=anthropic_api_key)
                     class AnthropicWrapper:
-                        def __init__(self, client, model_name, temperature):
+                        def __init__(self, client, model_name, temperature, **kwargs):
                             self.client = client
                             self.model_name = model_name
                             self.temperature = temperature
